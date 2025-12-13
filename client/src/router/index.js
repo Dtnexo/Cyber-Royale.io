@@ -4,6 +4,7 @@ import DashboardView from "../views/DashboardView.vue";
 import GameView from "../views/GameView.vue";
 import HeroesView from "../views/HeroesView.vue";
 import LeaderboardView from "../views/LeaderboardView.vue";
+import AdminView from "../views/AdminView.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -40,6 +41,12 @@ const router = createRouter({
       name: "play",
       component: GameView,
       meta: { requiresAuth: true },
+    },
+    {
+      path: "/admin",
+      name: "admin",
+      component: AdminView,
+      meta: { requiresAuth: true }, // Logic handled in component
     },
   ],
 });

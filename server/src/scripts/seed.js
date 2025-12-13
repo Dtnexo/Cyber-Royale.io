@@ -1,4 +1,5 @@
-const { sequelize, Hero } = require("../models");
+const { sequelize, Hero, User } = require("../models");
+const bcrypt = require("bcrypt");
 
 async function seed() {
   try {
@@ -185,6 +186,35 @@ async function seed() {
       updateOnDuplicate: ["name", "price", "stats", "class", "skins"],
     });
     console.log("Heroes seeded successfully!");
+
+    // --- SEED ADMIN USER ---
+    const adminUsername = "CommandantX";
+    const adminPassword = "NeonPrime2077!";
+    const adminEmail = "admin@cyber-royale.io";
+
+    const existingAdmin = await User.findOne({
+      where: { username: adminUsername },
+    });
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      await User.create({
+        username: adminUsername,
+        email: adminEmail,
+        password: hashedPassword,
+        isAdmin: true,
+        coins: 999999, // Admin perk
+      });
+      console.log("Admin user created: " + adminUsername);
+    } else {
+      // Ensure admin rights
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      existingAdmin.isAdmin = true;
+      existingAdmin.coins = 999999;
+      existingAdmin.password = hashedPassword;
+      await existingAdmin.save();
+      console.log("Admin user updated (Password reset).");
+    }
+    // -----------------------
 
     // Only exit if run directly
     if (require.main === module) {

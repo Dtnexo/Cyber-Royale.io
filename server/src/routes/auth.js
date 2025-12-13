@@ -32,7 +32,12 @@ router.post("/register", async (req, res) => {
     res.status(201).json({
       message: "User created",
       token,
-      user: { id: user.id, username: user.username, coins: user.coins },
+      user: {
+        id: user.id,
+        username: user.username,
+        coins: user.coins,
+        isAdmin: user.isAdmin,
+      },
     });
   } catch (err) {
     // Specific Error Handling
@@ -78,7 +83,12 @@ router.post("/login", async (req, res) => {
     );
     res.json({
       token,
-      user: { id: user.id, username: user.username, coins: user.coins },
+      user: {
+        id: user.id,
+        username: user.username,
+        coins: user.coins,
+        isAdmin: user.isAdmin,
+      },
     });
   } catch (err) {
     console.error(err);

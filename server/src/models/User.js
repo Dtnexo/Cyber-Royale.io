@@ -29,6 +29,10 @@ const User = sequelize.define("User", {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
+  isAdmin: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
   kills: {
     type: DataTypes.INTEGER,
     defaultValue: 0,

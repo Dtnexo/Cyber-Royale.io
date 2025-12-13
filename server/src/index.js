@@ -10,6 +10,7 @@ const authRoutes = require("./routes/auth");
 const shopRoutes = require("./routes/shop");
 const userRoutes = require("./routes/user");
 const leaderboardRoutes = require("./routes/leaderboard");
+const adminRoutes = require("./routes/admin");
 
 // Game Server logic
 const GameServer = require("./game/GameServer");
@@ -30,8 +31,6 @@ app.use(express.json());
 // API Routes
 const path = require("path");
 
-// ... imports ... imported above
-
 // Serve Static Files
 app.use(express.static(path.join(__dirname, "../../client/dist")));
 
@@ -40,6 +39,7 @@ app.use("/auth", authRoutes);
 app.use("/shop", shopRoutes);
 app.use("/user", userRoutes);
 app.use("/leaderboard", leaderboardRoutes);
+app.use("/admin", adminRoutes);
 
 // Catch-all handle for SPA
 app.get("*", (req, res) => {
