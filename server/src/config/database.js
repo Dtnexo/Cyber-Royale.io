@@ -1,6 +1,11 @@
 const { Sequelize } = require("sequelize");
 require("dotenv").config();
 
+console.log(
+  "DEBUG: Available Environment Variables:",
+  Object.keys(process.env).sort().join(", ")
+);
+
 let sequelize;
 
 if (process.env.MYSQL_URL) {
