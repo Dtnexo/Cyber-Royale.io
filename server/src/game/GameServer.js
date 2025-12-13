@@ -21,6 +21,10 @@ class GameServer {
               socket.id,
               new Player(socket.id, hero.toJSON(), username, skinColor)
             );
+            const player = this.players.get(socket.id);
+            const spawn = this.getSafeSpawn();
+            player.x = spawn.x;
+            player.y = spawn.y;
             socket.join("game_room");
             // Send initial Game State AND Map Data
             socket.emit("game_init", {
