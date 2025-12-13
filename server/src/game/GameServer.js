@@ -108,9 +108,11 @@ class GameServer {
           shield: player.shieldActive,
           invisible: player.isInvisible, // Send stealth state
           isFrozen: player.isFrozen, // Send frozen state
+          freezeEndTime: player.freezeEndTime || 0, // Send freeze end time
           skillCD: player.cooldowns.skill,
           username: player.username, // Send Username
           maxSkillCD: player.hero.stats.cooldown,
+          kills: player.kills, // Send Kill Count
         });
       });
 
@@ -173,10 +175,13 @@ class GameServer {
             if (p.effect === "FREEZE") {
               player.isFrozen = true;
               player.speed = 0;
+              player.freezeEndTime = Date.now() + 2000; // Track end time for client animation
+
               // Clear existing freeze timeout if any (not tracking ID for now, just overwrite)
               setTimeout(() => {
                 player.isFrozen = false;
                 player.speed = player.baseSpeed;
+                player.freezeEndTime = 0;
               }, 2000); // Freeze for 2 seconds
             }
 
@@ -187,12 +192,14 @@ class GameServer {
             if (player.hp <= 0) {
               const killer = this.players.get(p.ownerId);
               if (killer) {
+                killer.kills++;
                 killer.hp = Math.min(killer.maxHp, killer.hp + 50);
                 this.awardCoins(killer.username, 50);
               }
               player.hp = player.maxHp;
-              player.x = 100 + Math.random() * 1400;
-              player.y = 100 + Math.random() * 1000;
+              const spawn = this.getSafeSpawn();
+              player.x = spawn.x;
+              player.y = spawn.y;
               player.cooldowns.skill = 0;
               player.cooldowns.shoot = 0;
             }
@@ -226,8 +233,9 @@ class GameServer {
                 this.awardCoins(killer.username, 50);
               }
               player.hp = player.maxHp;
-              player.x = 100 + Math.random() * 1400;
-              player.y = 100 + Math.random() * 1000;
+              const spawn = this.getSafeSpawn();
+              player.x = spawn.x;
+              player.y = spawn.y;
             }
             break;
           }
@@ -243,11 +251,47 @@ class GameServer {
       const user = await User.findOne({ where: { username } });
       if (user) {
         user.coins += amount;
+        user.kills += 1; // Increment global kill count
         await user.save();
       }
     } catch (e) {
       console.error("Coin reward failed", e);
     }
+  }
+
+  getSafeSpawn() {
+    let safe = false;
+    let x, y;
+    let attempts = 0;
+    while (!safe && attempts < 100) {
+      // Increase edge padding to 100 to avoid border walls
+      x = 100 + Math.random() * (MapData.width - 200);
+      y = 100 + Math.random() * (MapData.height - 200);
+
+      let collision = false;
+      // Increase hitbox check to 80x80 (radius 40 effective) to be very safe
+      const pRect = { x: x - 40, y: y - 40, w: 80, h: 80 };
+
+      for (const obs of MapData.obstacles) {
+        if (
+          pRect.x < obs.x + obs.w &&
+          pRect.x + pRect.w > obs.x &&
+          pRect.y < obs.y + obs.h &&
+          pRect.y + pRect.h > obs.y
+        ) {
+          collision = true;
+          break;
+        }
+      }
+      if (!collision) safe = true;
+      attempts++;
+    }
+
+    // Fallback if 100 attempts failed (should process safe logic or return defaults)
+    if (!safe) {
+      return { x: 100, y: 100 }; // Default safe corner
+    }
+    return { x, y };
   }
 }
 

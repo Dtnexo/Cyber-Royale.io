@@ -16,6 +16,7 @@ export const useGameStore = defineStore("game", {
     getSelectedSkin: (state) => (heroId) => {
       return state.enabledSkins[heroId] || 0;
     },
+    getHeroById: (state) => (id) => state.allHeroes.find((h) => h.id === id),
   },
   actions: {
     async fetchHeroes() {

@@ -29,6 +29,10 @@ const User = sequelize.define("User", {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
+  kills: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
 });
 
 User.beforeCreate(async (user) => {

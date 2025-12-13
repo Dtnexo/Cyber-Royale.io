@@ -11,6 +11,7 @@ class Player {
     this.maxHp = heroData.stats.hp;
     this.baseSpeed = heroData.stats.speed;
     this.speed = this.baseSpeed;
+    this.kills = 0; // Track match kills
 
     // Unique Neon Color or Custom Skin
     if (customColor) {

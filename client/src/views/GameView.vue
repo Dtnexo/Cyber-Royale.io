@@ -25,6 +25,10 @@ let cameraX = 0;
 let cameraY = 0;
 let myId = null;
 
+// Assets
+const iceImg = new Image();
+iceImg.src = "/assets/ice_cube.png";
+
 // Inputs
 const keys = { w: false, a: false, s: false, d: false };
 let mouseAngle = 0;
@@ -314,13 +318,23 @@ const drawPlayer = (ctx, p) => {
       ctx.lineWidth = 5;
       ctx.stroke();
     }
-  } else if (p.isFrozen) {
-    // FROZEN STATUS (Square Block)
-    ctx.fillStyle = "rgba(0, 255, 255, 0.5)";
-    ctx.fillRect(-25, -25, 50, 50);
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-25, -25, 50, 50);
+  } else if (p.isFrozen && p.freezeEndTime) {
+    // MELTING ICE CUBE
+    const remaining = p.freezeEndTime - Date.now();
+    if (remaining > 0) {
+      const maxDuration = 2000;
+      const progress = Math.max(0, remaining / maxDuration); // 1.0 -> 0.0
+
+      // Visual: Fade out and shrink slightly
+      const size = 60 * (0.8 + 0.2 * progress);
+      const alpha = 0.5 + 0.5 * progress;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      // Draw centered image
+      ctx.drawImage(iceImg, -size / 2, -size / 2, size, size);
+      ctx.restore();
+    }
   } else if (heroClass === "Speed") {
     // SPEED (Arrow/Dart) - Point UP
     ctx.fillStyle = primaryColor;
@@ -382,6 +396,51 @@ const drawPlayer = (ctx, p) => {
   ctx.shadowBlur = 4;
   ctx.fillText(p.username || p.hero, screenX, screenY - 65);
   ctx.shadowBlur = 0;
+  ctx.shadowBlur = 0;
+};
+
+const drawLeaderboard = (ctx) => {
+  if (!players || players.length === 0) return;
+
+  const sorted = [...players].sort((a, b) => (b.kills || 0) - (a.kills || 0));
+  const top5 = sorted.slice(0, 5);
+
+  const boxW = 200;
+  const boxH = 30 + top5.length * 25;
+  const startX = window.innerWidth - boxW - 20;
+  const startY = 100; // Moved down to avoid "EXIT" button overlap
+
+  // Bg
+  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.fillRect(startX, startY, boxW, boxH);
+  ctx.strokeStyle = "#00f3ff";
+  ctx.strokeRect(startX, startY, boxW, boxH);
+
+  // Title
+  ctx.fillStyle = "#fff";
+  ctx.font = 'bold 16px "Segoe UI"';
+  ctx.textAlign = "left";
+  ctx.fillText("LEADERBOARD", startX + 10, startY + 20);
+
+  // Rows
+  ctx.font = '14px "Segoe UI"';
+  top5.forEach((p, i) => {
+    const y = startY + 45 + i * 25;
+    const name = p.username || p.hero;
+    const kills = p.kills || 0;
+
+    // Highlight self
+    if (p.id === myId) {
+      ctx.fillStyle = "#00ff00";
+    } else {
+      ctx.fillStyle = "#ccc";
+    }
+
+    ctx.fillText(`${i + 1}. ${name}`, startX + 10, y);
+    ctx.textAlign = "right";
+    ctx.fillText(kills, startX + boxW - 10, y);
+    ctx.textAlign = "left";
+  });
 };
 
 const loop = (ctx) => {
@@ -435,6 +494,9 @@ const loop = (ctx) => {
 
   // Draw Players
   players.forEach((p) => drawPlayer(ctx, p));
+
+  // Draw UI Layers
+  drawLeaderboard(ctx);
 
   animationId = requestAnimationFrame(() => loop(ctx));
 };
