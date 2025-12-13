@@ -1,7 +1,8 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { io } from "socket.io-client";
+import nipplejs from "nipplejs";
 import { useGameStore } from "../stores/game";
 import { useAuthStore } from "../stores/auth";
 
@@ -11,6 +12,10 @@ const auth = useAuthStore();
 
 const canvasRef = ref(null);
 const socket = ref(null);
+const isMobile = ref(false);
+
+// Joysticks
+let joyManager = null;
 
 const skillCD = ref(0);
 const maxSkillCD = ref(1);
@@ -30,14 +35,14 @@ const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
 
 // Inputs
-const keys = { w: false, a: false, s: false, d: false };
+const keys = { w: false, a: false, s: false, d: false, space: false };
 let mouseAngle = 0;
 
 // Config
 const VIEWPORT_W = window.innerWidth;
 const VIEWPORT_H = window.innerHeight;
 
-onMounted(() => {
+onMounted(async () => {
   if (!gameStore.selectedHeroId) {
     router.push("/dashboard");
     return;
@@ -92,8 +97,23 @@ onMounted(() => {
   window.addEventListener("resize", handleResize);
 
   const ctx = canvasRef.value.getContext("2d");
+
+  // Strict Mobile Check: Width < 768 AND Touch Capability
+  const isTouch =
+    navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0;
+  isMobile.value = window.innerWidth <= 768 && isTouch;
+
   canvasRef.value.width = window.innerWidth;
   canvasRef.value.height = window.innerHeight;
+
+  if (isMobile.value) {
+    await nextTick();
+    try {
+      initMobileControls();
+    } catch (err) {
+      console.error("Mobile init failed:", err);
+    }
+  }
 
   loop(ctx);
 
@@ -131,6 +151,93 @@ const handleMouse = (e) => {
 
 const handleSkill = (e) => {
   if (e.key.toLowerCase() === "e") socket.value.emit("skill_trigger");
+};
+
+// --- MOBILE CONTROLS ---
+const initMobileControls = () => {
+  // 1. Movement Joystick (Left)
+  const leftZone = document.getElementById("zone-joystick-left");
+  const joyLeft = nipplejs.create({
+    zone: leftZone,
+    mode: "static",
+    position: { left: "80px", bottom: "80px" },
+    color: "#00f3ff",
+    size: 100,
+  });
+
+  joyLeft.on("move", (evt, data) => {
+    if (data.angle) {
+      // Reset all movement keys first
+      keys.w = false;
+      keys.a = false;
+      keys.s = false;
+      keys.d = false;
+
+      // Map Angle to WASD (Basic 8-direction approximation or just threshold)
+      const deg = data.angle.degree;
+
+      // Up (45-135)
+      if (deg > 45 && deg < 135) keys.w = true;
+      // Down (225-315)
+      if (deg > 225 && deg < 315) keys.s = true;
+      // Left (135-225)
+      if (deg > 135 && deg < 225) keys.a = true;
+      // Right (315-360 or 0-45)
+      if (deg > 315 || deg < 45) keys.d = true;
+    }
+  });
+
+  joyLeft.on("end", () => {
+    keys.w = false;
+    keys.a = false;
+    keys.s = false;
+    keys.d = false;
+  });
+
+  // 2. Aim Joystick (Right)
+  const rightZone = document.getElementById("zone-joystick-right");
+  const joyRight = nipplejs.create({
+    zone: rightZone,
+    mode: "static",
+    position: { right: "80px", bottom: "80px" },
+    color: "#ff00ff",
+    size: 100,
+  });
+
+  joyRight.on("move", (evt, data) => {
+    if (data.angle) {
+      // NippleJS gives angle in radians (data.angle.radian) relative to X axis properly?
+      // NOTE: nipplejs radian is mathematical (counter-clockwise from Right).
+      // Canvas Math.atan2(y, x) is similar.
+      // We just need to invert Y if needed?
+      // NippleJS: Up is 90deg (PI/2). Down is 270deg.
+      // Screen Coords: Up is -Y.
+      // So if Nipple says UP, vector is (0, 1) in its world?
+      // Actually, we can just use the vector directly.
+      // BUT `mouseAngle` is expected to be `Math.atan2(y, x)` relative to player center.
+      // Nipple radian should match directly EXCEPT Y-axis flip might be needed if "Up" means positive Y for Nipple but negative Y for Screen.
+      // Joystick "Up" => angle 90 deg => -Y in screen.
+      // Let's rely on data.angle.radian but verify direction.
+      // If we drag UP, angle is PI/2.
+      // In game loop, we just use this angle for rotation.
+      // Standard canvas rotation: +Y is Down.
+      // If I want to face UP, I need -Y. atan2(-1, 0) = -PI/2.
+      // Nipple UP is +PI/2. So we negate the angle?
+      mouseAngle = -data.angle.radian;
+    }
+  });
+};
+
+const triggerSkill = () => {
+  socket.value.emit("skill_trigger");
+};
+
+const startShooting = () => {
+  keys.space = true;
+};
+
+const stopShooting = () => {
+  keys.space = false;
 };
 
 const handleResize = () => {
@@ -294,6 +401,32 @@ const drawPlayer = (ctx, p) => {
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2); // Rotate 90deg so 0rad (Right) becomes Down? No.
   // Facing UP rotated Down = Facing Right. CORRECT.
+
+  if (isMe) {
+    // --- AIM RETICLE ---
+    // Draw a direction indicator (Laser Sight / Arrow)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, -40); // Much shorter (was -100)
+    ctx.stroke();
+    ctx.setLineDash([]); // Reset
+
+    // Aim Dot
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(0, -40, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Arrow Head
+    ctx.beginPath();
+    ctx.moveTo(0, -50);
+    ctx.lineTo(5, -40);
+    ctx.lineTo(-5, -40);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // --- HERO VISUALS ---
   // Use Class to determine shape if specific hero not defined
@@ -509,6 +642,7 @@ const loop = (ctx) => {
 
 <template>
   <div class="game-view">
+    <canvas ref="canvasRef" class="game-canvas"></canvas>
     <div class="hud">
       <div class="hud-panel left">
         <h3>HERO: {{ gameStore.selectedHero?.name || "UNKNOWN" }}</h3>
@@ -517,13 +651,18 @@ const loop = (ctx) => {
         <h2>NEON ARENA</h2>
       </div>
 
-      <!-- Skill HUD -->
-      <div class="hud-skill">
+      <!-- Skill HUD (Clickable on Mobile) -->
+      <div
+        class="hud-skill"
+        @click="triggerSkill"
+        @touchstart.prevent="triggerSkill"
+      >
         <div
           class="skill-box"
           :class="{
             'active-box': skillCD > maxSkillCD,
             disabled: skillCD > 0 && skillCD <= maxSkillCD,
+            'mobile-skill': isMobile,
           }"
         >
           <span class="key-hint">E</span>
@@ -551,9 +690,27 @@ const loop = (ctx) => {
       </div>
     </div>
 
-    <canvas ref="canvasRef" class="game-canvas"></canvas>
+    <div class="controls-hint" v-if="!isMobile">
+      WASD: Move | MOUSE: Aim | Space: Shoot
+    </div>
 
-    <div class="controls-hint">WASD: Move | MOUSE: Aim | Space: Shoot</div>
+    <!-- Mobile Controls Containers -->
+    <div v-if="isMobile" id="zone-joystick-left" class="joy-zone"></div>
+    <div v-if="isMobile" id="zone-joystick-right" class="joy-zone"></div>
+
+    <!-- Mobile Action Buttons -->
+    <div v-if="isMobile" class="mobile-actions">
+      <!-- Shoot Button (Large, near right stick) -->
+      <button
+        class="btn-fire"
+        @touchstart.prevent="startShooting"
+        @touchend.prevent="stopShooting"
+        @mousedown.prevent="startShooting"
+        @mouseup.prevent="stopShooting"
+      >
+        FIRE
+      </button>
+    </div>
   </div>
 </template>
 
@@ -720,5 +877,89 @@ const loop = (ctx) => {
   color: #ffea00;
   text-shadow: 0 0 5px #ffea00;
   font-size: 22px; /* Slightly bigger */
+}
+
+/* Mobile Controls CSS */
+.joy-zone {
+  position: absolute;
+  bottom: 0px;
+  width: 50%;
+  height: 200px;
+  height: 200px;
+  z-index: 200;
+  /* border: 1px solid green; Debug */
+}
+#zone-joystick-left {
+  left: 0;
+}
+#zone-joystick-right {
+  right: 0;
+}
+
+.mobile-actions {
+  position: absolute;
+  bottom: 150px;
+  right: 20px;
+  bottom: 150px;
+  right: 20px;
+  z-index: 200;
+}
+
+.btn-fire {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(255, 0, 0, 0.5);
+  border: 3px solid #ff3333;
+  color: #fff;
+  font-weight: bold;
+  font-size: 1.2rem;
+  box-shadow: 0 0 15px #ff3333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-fire:active {
+  background: #ff3333;
+}
+
+.mobile-skill {
+  /* Make the skill button pop more on mobile */
+  transform: scale(1.2);
+  border-color: #00f3ff;
+  box-shadow: 0 0 25px rgba(0, 243, 255, 0.6);
+}
+
+@media (max-width: 768px) {
+  .hud {
+    padding: 0 1rem;
+    height: 60px;
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .hud-panel h2 {
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+  }
+
+  .hud-panel h3 {
+    font-size: 0.8rem;
+  }
+
+  .btn-quit {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.7rem;
+  }
+
+  .skill-box {
+    width: 60px;
+    height: 60px;
+    bottom: 20px; /* Move up a bit */
+  }
+
+  .controls-hint {
+    display: none; /* Hide keyboard hints on mobile */
+  }
 }
 </style>

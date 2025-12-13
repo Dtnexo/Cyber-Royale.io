@@ -169,7 +169,7 @@ class GameServer {
             }
 
             // Apply Damage
-            let damage = 15;
+            let damage = p.damage || 15;
 
             // FREEZE EFFECT
             if (p.effect === "FREEZE") {

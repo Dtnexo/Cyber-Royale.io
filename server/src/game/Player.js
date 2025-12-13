@@ -102,6 +102,7 @@ class Player {
       color: this.nextShotFreeze ? "#00ffff" : this.color,
       life: 2000,
       effect: this.nextShotFreeze ? "FREEZE" : null,
+      // damage: 15 (Default handled by server if omitted)
     };
 
     // Consume Freeze Shot
@@ -175,7 +176,10 @@ class Player {
       this.cooldowns.skill += 3000;
       // Phase
       this.isPhasing = true;
-      setTimeout(() => (this.isPhasing = false), 3000);
+      setTimeout(() => {
+        this.isPhasing = false;
+        this.checkUnstuck();
+      }, 3000);
     }
 
     // === DAMAGE ===
@@ -252,6 +256,62 @@ class Player {
       // Self Heal (Instant)
       this.hp = Math.min(this.maxHp, this.hp + 100);
     }
+  }
+  checkUnstuck() {
+    // 1. Check if currently inside wall
+    let collided = false;
+    const pRect = { x: this.x - 20, y: this.y - 20, w: 40, h: 40 };
+
+    for (const obs of MapData.obstacles) {
+      if (
+        pRect.x < obs.x + obs.w &&
+        pRect.x + pRect.w > obs.x &&
+        pRect.y < obs.y + obs.h &&
+        pRect.y + pRect.h > obs.y
+      ) {
+        collided = true;
+        break;
+      }
+    }
+
+    if (!collided) return; // All good
+
+    // 2. Try to find a safe spot nearby (Up, Down, Left, Right)
+    const offsets = [
+      { x: 0, y: -50 }, // Up
+      { x: 0, y: 50 }, // Down
+      { x: -50, y: 0 }, // Left
+      { x: 50, y: 0 }, // Right
+    ];
+
+    for (const off of offsets) {
+      const testX = this.x + off.x;
+      const testY = this.y + off.y;
+      const testRect = { x: testX - 20, y: testY - 20, w: 40, h: 40 };
+      let safe = true;
+
+      for (const obs of MapData.obstacles) {
+        if (
+          testRect.x < obs.x + obs.w &&
+          testRect.x + testRect.w > obs.x &&
+          testRect.y < obs.y + obs.h &&
+          testRect.y + testRect.h > obs.y
+        ) {
+          safe = false;
+          break;
+        }
+      }
+
+      if (safe) {
+        // Teleport to safe spot
+        this.x = testX;
+        this.y = testY;
+        return;
+      }
+    }
+
+    // 3. If deep stuck -> Materialization Misfire (Death)
+    this.hp = 0;
   }
 }
 

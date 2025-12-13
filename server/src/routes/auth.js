@@ -12,11 +12,13 @@ router.post("/register", async (req, res) => {
     // 1. Create user
     const user = await User.create({ username, email, password });
 
-    // 2. Unlock default hero (Vanguard - ID 1)
-    const defaultHero = await Hero.findByPk(1);
-    if (defaultHero) {
-      await UserUnlock.create({ userId: user.id, heroId: defaultHero.id });
-    }
+    // 2. Unlock default heroes (Vanguard, Spectre, Techno, Sniper)
+    const initialHeroIds = [1, 2, 3, 10];
+    const unlocks = initialHeroIds.map((id) => ({
+      userId: user.id,
+      heroId: id,
+    }));
+    await UserUnlock.bulkCreate(unlocks);
 
     // 3. Generate Token for Auto-Login
     const token = jwt.sign(

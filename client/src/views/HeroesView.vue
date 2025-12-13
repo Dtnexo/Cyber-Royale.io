@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import { useGameStore } from "../stores/game";
@@ -98,7 +98,7 @@ const goBack = () => {
       </button>
       <div class="header-info">
         <h1 class="page-title glitch-effect" data-text="ARMORY">ARMORY</h1>
-        <div class="credits">CREDITS: {{ auth.user?.coins || 0 }} 🟡</div>
+        <div class="credits">CREDITS: {{ auth.user?.coins || 0 }} ðŸŸ¡</div>
       </div>
     </div>
 
@@ -678,5 +678,347 @@ const goBack = () => {
 .heroes-grid-container::-webkit-scrollbar-thumb {
   background: #333;
   border-radius: 3px;
+}
+
+.price {
+  color: #ffd700;
+}
+.owned-label {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+/* Right Panel */
+.right-panel {
+  flex: 2;
+  background: rgba(10, 10, 12, 0.8);
+  backdrop-filter: blur(10px);
+  padding: 3rem;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--primary-dim);
+}
+
+.detail-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.detail-header {
+  border-bottom: 2px solid #333;
+  padding-bottom: 1rem;
+}
+
+.detail-name {
+  font-size: 3.5rem;
+  margin: 0;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 15px var(--primary-dim);
+  line-height: 1;
+}
+
+.detail-class {
+  color: var(--primary);
+  font-size: 1.2rem;
+  letter-spacing: 3px;
+  margin-top: 0.5rem;
+}
+
+.info-block label {
+  display: block;
+  color: #666;
+  font-size: 0.8rem;
+  letter-spacing: 2px;
+  margin-bottom: 0.5rem;
+}
+
+.ability-text {
+  font-size: 1.1rem;
+  color: #ddd;
+  line-height: 1.5;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1rem;
+  border-left: 2px solid var(--primary);
+}
+
+.stats-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+}
+
+.stat-item span {
+  width: 50px;
+  font-weight: bold;
+  color: #888;
+}
+
+.bar {
+  flex: 1;
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  background: var(--primary);
+}
+
+.skins-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.skin-option {
+  width: 50px;
+  height: 50px;
+  border: 2px solid #333;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.skin-option.selected {
+  border-color: #fff;
+  box-shadow: 0 0 10px #fff;
+  transform: scale(1.1);
+}
+
+.skin-name {
+  margin-top: 0.5rem;
+  color: #888;
+  font-style: italic;
+}
+
+.detail-actions {
+  margin-top: auto;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 1.5rem;
+  font-size: 1.4rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.action-btn.equip {
+  background: transparent;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+}
+
+.action-btn.equip:hover {
+  background: var(--primary);
+  box-shadow: 0 0 20px var(--primary);
+  color: #000;
+}
+
+.action-btn.equipped {
+  background: #222;
+  color: var(--primary);
+  border: 1px solid #444;
+  cursor: default;
+}
+
+.action-btn.buy {
+  background: #ffd700;
+  color: #000;
+}
+
+.action-btn.buy:hover:not(:disabled) {
+  background: #fff;
+  box-shadow: 0 0 20px #ffd700;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+.err-msg {
+  color: #ff3333;
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #444;
+  letter-spacing: 2px;
+  font-size: 1.5rem;
+}
+
+/* Scrollbars */
+.heroes-grid-container::-webkit-scrollbar {
+  width: 6px;
+}
+.heroes-grid-container::-webkit-scrollbar-track {
+  background: #000;
+}
+.heroes-grid-container::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+@media (max-width: 768px) {
+  /* Layout Base */
+  .heroes-page {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Header - Compact */
+  .header {
+    padding: 0.5rem 1rem;
+    flex-direction: row;
+    height: 60px;
+    gap: 0.5rem;
+  }
+
+  .header-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .page-title {
+    font-size: 1.2rem;
+    line-height: 1.2;
+  }
+
+  .credits {
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .btn-secondary {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
+  /* Main Split */
+  .main-content {
+    flex-direction: column;
+    height: calc(100vh - 60px);
+  }
+
+  /* TOP: LIST (35%) */
+  .left-panel {
+    flex: none;
+    height: 35%;
+    border-right: none;
+    border-bottom: 2px solid var(--primary-dim);
+    padding: 0.5rem;
+    padding-bottom: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scrollable Tabs */
+  .class-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    justify-content: flex-start;
+    padding-bottom: 5px;
+    flex-shrink: 0;
+  }
+  /* Hide Scrollbar for tabs */
+  .class-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-btn {
+    min-width: auto;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .heroes-grid-container {
+    padding-right: 0;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .heroes-grid {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 0.5rem;
+    padding-bottom: 1rem;
+  }
+
+  .hero-card .card-content {
+    padding: 0.5rem;
+  }
+
+  .hero-icon-placeholder {
+    width: 30px;
+    height: 30px;
+  }
+
+  .hero-header h3 {
+    font-size: 0.8rem;
+  }
+
+  /* BOTTOM: DETAILS (65%) */
+  .right-panel {
+    flex: 1;
+    border-left: none;
+    padding: 1rem;
+    background: rgba(10, 10, 12, 0.98);
+    overflow-y: auto;
+  }
+
+  .detail-name {
+    font-size: 1.5rem;
+    margin-bottom: 0.2rem;
+  }
+
+  .detail-class {
+    font-size: 0.9rem;
+  }
+
+  .info-block {
+    margin-bottom: 1rem;
+  }
+
+  .ability-text {
+    font-size: 0.9rem;
+    padding: 0.5rem;
+  }
+
+  .action-btn {
+    padding: 0.8rem;
+    font-size: 1rem;
+    margin-top: 0.5rem;
+  }
+
+  .skin-option {
+    width: 35px;
+    height: 35px;
+  }
 }
 </style>

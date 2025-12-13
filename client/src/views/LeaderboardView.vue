@@ -222,4 +222,37 @@ const goBack = () => {
   color: var(--primary);
   box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
 }
+
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .content-container {
+    padding: 1rem;
+  }
+
+  /* Compact rows for mobile */
+  .rank-header,
+  .rank-row {
+    grid-template-columns: 50px 1fr 60px 0px; /* Hide Coins on very small screens? Or squish? Let's hide coins to save space */
+    font-size: 0.8rem;
+    gap: 0.5rem;
+    padding: 0.8rem 0.5rem;
+  }
+
+  .rank-header span:nth-child(4),
+  .rank-row span:nth-child(4) {
+    display: none; /* Hide Credits column on mobile */
+  }
+
+  .rank {
+    font-size: 1rem;
+  }
+  .name {
+    font-size: 0.9rem;
+  }
+}
 </style>

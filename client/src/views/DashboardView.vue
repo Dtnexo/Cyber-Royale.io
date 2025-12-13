@@ -443,5 +443,57 @@ const retryConnection = async () => {
   color: #ff5555;
   padding: 1rem;
   margin-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+  .dashboard-page {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
+  .top-bar {
+    padding: 1rem;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .user-info {
+    font-size: 0.9rem;
+    gap: 1rem;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .section-title {
+    font-size: 1.8rem;
+    letter-spacing: 2px;
+    text-align: center;
+  }
+
+  .main-panel {
+    gap: 1.5rem;
+  }
+
+  .hero-display-card {
+    padding: 1.5rem;
+    width: 95%;
+  }
+
+  .hero-name {
+    font-size: 2.2rem;
+  }
+
+  .action-dock {
+    flex-direction: column;
+  }
+
+  .start-btn {
+    font-size: 1.4rem;
+    padding: 1rem;
+    width: 100%;
+  }
 }
 </style>
