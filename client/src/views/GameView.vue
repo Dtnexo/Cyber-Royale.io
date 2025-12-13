@@ -43,7 +43,12 @@ onMounted(() => {
     return;
   }
 
-  socket.value = io("http://localhost:3005");
+  // Auto-detect URL for production (same origin), localhost for dev
+  const socketUrl = import.meta.env.PROD
+    ? window.location.origin
+    : "http://localhost:3005";
+
+  socket.value = io(socketUrl);
 
   socket.value.on("connect", () => {
     // Get Skin Color
