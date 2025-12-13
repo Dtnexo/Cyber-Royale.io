@@ -19,9 +19,13 @@ router.post("/register", async (req, res) => {
     }
 
     // 3. Generate Token for Auto-Login
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-      expiresIn: "24h",
-    });
+    const token = jwt.sign(
+      { id: user.id },
+      process.env.JWT_SECRET || "default_secret_key",
+      {
+        expiresIn: "24h",
+      }
+    );
 
     res.status(201).json({
       message: "User created",
@@ -63,9 +67,13 @@ router.post("/login", async (req, res) => {
     if (!validPass)
       return res.status(400).json({ message: "Invalid password" });
 
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-      expiresIn: "24h",
-    });
+    const token = jwt.sign(
+      { id: user.id },
+      process.env.JWT_SECRET || "default_secret_key",
+      {
+        expiresIn: "24h",
+      }
+    );
     res.json({
       token,
       user: { id: user.id, username: user.username, coins: user.coins },
