@@ -654,6 +654,7 @@ const loop = (ctx) => {
       <!-- Skill HUD (Clickable on Mobile) -->
       <div
         class="hud-skill"
+        v-if="!isMobile"
         @click="triggerSkill"
         @touchstart.prevent="triggerSkill"
       >
@@ -700,6 +701,18 @@ const loop = (ctx) => {
 
     <!-- Mobile Action Buttons -->
     <div v-if="isMobile" class="mobile-actions">
+      <div class="skill-btn-wrapper">
+        <button
+          class="btn-skill-mobile"
+          :class="{ ready: skillCD <= 0, cooldown: skillCD > 0 }"
+          @touchstart.prevent="triggerSkill"
+          @mousedown.prevent="triggerSkill"
+        >
+          <span v-if="skillCD > 0">{{ (skillCD / 1000).toFixed(0) }}</span>
+          <span v-else style="font-size: 1.5rem">⚡</span>
+        </button>
+      </div>
+
       <!-- Shoot Button (Large, near right stick) -->
       <button
         class="btn-fire"
@@ -898,11 +911,12 @@ const loop = (ctx) => {
 
 .mobile-actions {
   position: absolute;
-  bottom: 150px;
-  right: 20px;
-  bottom: 150px;
-  right: 20px;
+  bottom: 140px;
+  right: 30px;
   z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 50px;
 }
 
 .btn-fire {
@@ -922,6 +936,40 @@ const loop = (ctx) => {
 
 .btn-fire:active {
   background: #ff3333;
+  transform: scale(0.95);
+}
+
+.btn-skill-mobile {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid #00f3ff;
+  color: #00f3ff;
+  font-weight: bold;
+  font-size: 1.2rem;
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-skill-mobile.ready {
+  background: rgba(0, 243, 255, 0.2);
+  box-shadow: 0 0 15px #00f3ff;
+}
+
+.btn-skill-mobile.cooldown {
+  border-color: #555;
+  color: #aaa;
+  box-shadow: none;
+}
+
+.btn-skill-mobile:active {
+  transform: scale(0.95);
+  background: #00f3ff;
+  color: #000;
 }
 
 .mobile-skill {
