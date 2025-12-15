@@ -494,9 +494,88 @@ class GameServer {
 
 
 
-      // 2. Update Projectiles
       for (let i = this.projectiles.length - 1; i >= 0; i--) {
         const p = this.projectiles[i];
+
+        // BLACK HOLE SHOT LOGIC
+        if (p.type === "BLACK_HOLE_SHOT") {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= dt * 1000;
+
+          // Checks for Collision (Walls & Players)
+          let hitSomething = false;
+          // 1. Walls
+          const pRect = { x: p.x - 10, y: p.y - 10, w: 20, h: 20 };
+          for (const obs of this.map.obstacles) {
+            if (
+              pRect.x < obs.x + obs.w &&
+              pRect.x + pRect.w > obs.x &&
+              pRect.y < obs.y + obs.h &&
+              pRect.y + pRect.h > obs.y
+            ) {
+              hitSomething = true;
+              break;
+            }
+          }
+          // 2. Players (Direct Hit)
+          if (!hitSomething) {
+            for (const [pid, player] of this.players) {
+              if (pid === p.ownerId) continue;
+              if (player.isDead) continue;
+              const dx = p.x - player.x;
+              const dy = p.y - player.y;
+              if (Math.sqrt(dx * dx + dy * dy) < 30) {
+                hitSomething = true;
+                break;
+              }
+            }
+          }
+
+          // Transform on Death OR Collision
+          if (p.life <= 0 || hitSomething) {
+            // IMPACT DAMAGE
+            if (hitSomething) {
+              for (const [pid, player] of this.players) {
+                if (pid === p.ownerId) continue;
+                if (player.isDead) continue;
+                const dx = p.x - player.x;
+                const dy = p.y - player.y;
+                if (Math.sqrt(dx * dx + dy * dy) < 30) {
+                  player.hp -= 20;
+                  this.io.emit("visual_effect", {
+                    type: "hit",
+                    targetId: pid,
+                    x: player.x,
+                    y: player.y,
+                    color: "#d000ff",
+                  });
+                  if (player.hp <= 0 && !player.isDead) {
+                    const killer = this.players.get(p.ownerId);
+                    if (killer) killer.kills++;
+                    player.killedBy = killer ? killer.username : "BlackHole";
+                    this.handleDeath(player, killer);
+                  }
+                }
+              }
+            }
+
+            this.projectiles.splice(i, 1);
+
+            // Spawn Black Hole
+            const blackHole = {
+              type: "BLACK_HOLE",
+              x: p.x,
+              y: p.y,
+              ownerId: p.ownerId,
+              life: 5000,
+            };
+            this.entities.push(blackHole);
+            continue;
+          }
+          continue;
+        }
+
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
@@ -709,9 +788,110 @@ class GameServer {
         }
       }
 
-      // 3. Update Entities (Mines)
       for (let i = this.entities.length - 1; i >= 0; i--) {
         const ent = this.entities[i];
+
+        if (ent.type === "BLACK_HOLE") {
+          ent.life -= dt * 1000;
+
+          // EXPLOSION CHECK
+          if (ent.life <= 0) {
+            const hx = ent.x;
+            const hy = ent.y;
+            this.entities.splice(i, 1); // Remove
+
+            this.io.to("game_room").emit("visual_effect", {
+              type: "black_hole_explode",
+              x: hx,
+              y: hy,
+            });
+
+            // Knockback Players
+            for (const [pid, player] of this.players) {
+              if (player.isDead) continue;
+              const dx = player.x - hx;
+              const dy = player.y - hy;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              if (dist < 300) {
+                const angle = Math.atan2(dy, dx);
+                // Fixed Wall Collision Knockback
+                const knockbackDist = 120;
+                let destX = player.x + Math.cos(angle) * knockbackDist;
+                let destY = player.y + Math.sin(angle) * knockbackDist;
+
+                let hitWall = false;
+                const testRect = { x: destX - 20, y: destY - 20, w: 40, h: 40 };
+                for (const obs of this.map.obstacles) {
+                  if (
+                    testRect.x < obs.x + obs.w &&
+                    testRect.x + testRect.w > obs.x &&
+                    testRect.y < obs.y + obs.h &&
+                    testRect.y + testRect.h > obs.y
+                  ) {
+                    hitWall = true;
+                    break;
+                  }
+                }
+
+                if (hitWall) {
+                  destX = player.x + Math.cos(angle) * (knockbackDist * 0.2);
+                  destY = player.y + Math.sin(angle) * (knockbackDist * 0.2);
+                }
+
+                destX = Math.max(20, Math.min(1600 - 20, destX));
+                destY = Math.max(20, Math.min(1200 - 20, destY));
+
+                player.x = destX;
+                player.y = destY;
+                player.hp -= 40;
+
+                if (player.hp <= 0 && !player.isDead) {
+                  const killer = this.players.get(ent.ownerId);
+                  if (killer) killer.kills++;
+                  player.killedBy = killer ? killer.username : "BlackHole";
+                  this.handleDeath(player, killer);
+                }
+              }
+            }
+            continue;
+          }
+
+          // Gravity Pull
+          const radius = 250;
+          const pullStrength = 300;
+
+          for (const [pid, p] of this.players) {
+            if (pid === ent.ownerId) continue;
+            if (p.isDead) continue;
+
+            const dx = ent.x - p.x;
+            const dy = ent.y - p.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < radius) {
+              if (dist < 1) dist = 1;
+              const nx = dx / dist;
+              const ny = dy / dist;
+              let strength = (1 - dist / radius) * pullStrength * (1 / 60);
+              if (strength > dist) strength = dist;
+
+              p.x += nx * strength;
+              p.y += ny * strength;
+
+              // Damage DOT
+              if (Math.random() < 0.2) {
+                p.hp -= 10;
+                if (p.hp <= 0 && !p.isDead) {
+                  const killer = this.players.get(ent.ownerId);
+                  if (killer) killer.kills++;
+                  p.killedBy = killer ? killer.username : "BlackHole";
+                  this.handleDeath(p, killer);
+                }
+              }
+            }
+          }
+        }
 
         // STICKY GRENADE LOGIC
         if (ent.type === "STICKY_GRENADE") {

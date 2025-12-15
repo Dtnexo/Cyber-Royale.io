@@ -98,11 +98,20 @@ onMounted(async () => {
     if (data.type === "shockwave") {
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
       createShockwaveVisual(data.x, data.y, data.color || "#ffffff"); // Add Ring
-
-      // Could be enhanced with a ring later, but explosion is good for now
     } else if (data.type === "poison_hit") {
-      // Spawn green bubbles on victim
       spawnExplosion(data.x, data.y, "#32cd32");
+    } else if (data.type === "hit") {
+      spawnHitSparks(data.x, data.y, data.color);
+      // Sprite Flash Logic
+      if (data.targetId) {
+        const victim = players.find((p) => p.id === data.targetId);
+        if (victim) victim.flashTime = 5; // Flash for 5 frames
+      }
+    } else if (data.type === "black_hole_explode") {
+      spawnExplosion(data.x, data.y, "#d000ff");
+      createShockwaveVisual(data.x, data.y, "#bf00ff");
+      addScreenShake(15, 20);
+      triggerFlash(0.5);
     }
   });
 
@@ -391,13 +400,13 @@ const createShockwaveVisual = (x, y, color) => {
     y,
     color,
     radius: 10,
-    maxRadius: 100,
+    maxRadius: 300,
     alpha: 1.0,
     width: 10
   });
 };
 
-const createParticle = (x, y, color, speed, life) => {
+const createParticle = (x, y, color, speed, life, type = "circle") => {
   const angle = Math.random() * Math.PI * 2;
   particles.push({
     x,
@@ -407,6 +416,9 @@ const createParticle = (x, y, color, speed, life) => {
     life,
     maxLife: life,
     color,
+    type,
+    angle: Math.random() * Math.PI, 
+    rotSpeed: (Math.random() - 0.5) * 0.2, 
   });
 };
 
@@ -429,6 +441,7 @@ const updateParticles = () => {
     p.x += p.vx;
     p.y += p.vy;
     p.life--;
+    if (p.type === "debris") p.angle += p.rotSpeed;
     if (p.life <= 0) particles.splice(i, 1);
   }
   
@@ -463,8 +476,16 @@ const drawParticles = (ctx) => {
   particles.forEach((p) => {
     ctx.globalAlpha = p.life / p.maxLife;
     ctx.fillStyle = p.color;
-    // OPTIMIZATION: Use fillRect instead of arc (much faster)
-    ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
+
+    if (p.type === "debris") {
+      ctx.save();
+      ctx.translate(p.x - cameraX, p.y - cameraY);
+      ctx.rotate(p.angle);
+      ctx.fillRect(-3, -3, 6, 6); 
+      ctx.restore();
+    } else {
+      ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
+    }
     ctx.globalAlpha = 1.0;
   });
 };
@@ -964,6 +985,90 @@ const loop = (ctx) => {
       ctx.arc(4, -4, 6, 0, Math.PI * 2);
       ctx.fill();
       
+      ctx.restore();
+    } else if (ent.type === "MINE") {
+    } else if (ent.type === "BLACK_HOLE") {
+      const sx = ent.x - cameraX;
+      const sy = ent.y - cameraY;
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      // BLINKING LOGIC (Using synced life)
+      const time = Date.now() / 1000;
+
+      // 1. PHOTON RING (Glowing White/Blue Halo)
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = "#e0ffff";
+      ctx.beginPath();
+      ctx.arc(0, 0, 42, 0, Math.PI * 2);
+      ctx.strokeStyle = "#fff"; // Solid White
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0; // Reset
+
+      // 2. EVENT HORIZON (Pitch Black)
+      ctx.beginPath();
+      ctx.globalAlpha = 1.0; // Always Solid
+      ctx.arc(0, 0, 40, 0, Math.PI * 2);
+      ctx.fillStyle = "#000";
+      ctx.fill();
+
+      // 3. INNER ACCRETION DISK (Fast, Bright Violet)
+      ctx.rotate(time * 2); // Fast Rotation
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        // Inner radius 50
+        ctx.arc(
+          0,
+          0,
+          50,
+          i * ((Math.PI * 2) / 3),
+          i * ((Math.PI * 2) / 3) + 1.5
+        );
+        ctx.strokeStyle = "#da70d6"; // Orchid/Violet
+        ctx.stroke();
+      }
+
+      // 4. OUTER ACCRETION DISK (Slow, Darker Purple, Reverse Spin)
+      ctx.rotate(-time * 3); // Reverse rotation relative to inner (net effect)
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 6;
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        // Outer radius 70
+        ctx.arc(
+          0,
+          0,
+          70,
+          i * ((Math.PI * 2) / 4),
+          i * ((Math.PI * 2) / 4) + 1.0
+        );
+        ctx.strokeStyle = "#9400d3"; // Dark Violet
+        ctx.stroke();
+      }
+
+      // 5. SUCTION LINES (Cyan/White - Moving Inward)
+      // Reset rotation for particles
+      ctx.rotate(time); // Just to keep them moving
+      if (Math.random() > 0.3) {
+        // Draw random line pointing to center
+        const angle = Math.random() * Math.PI * 2;
+        const outerDist = 120;
+        const innerDist = 50;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * outerDist, Math.sin(angle) * outerDist);
+        ctx.lineTo(Math.cos(angle) * innerDist, Math.sin(angle) * innerDist);
+        ctx.strokeStyle =
+          Math.random() > 0.5
+            ? "rgba(0, 255, 255, 0.3)"
+            : "rgba(255, 0, 255, 0.3)";
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 1.0;
+        ctx.stroke();
+      }
+
       ctx.restore();
     } else if (ent.type === "MINE") {
       const sx = ent.x - cameraX;
