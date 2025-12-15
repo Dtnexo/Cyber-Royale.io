@@ -25,7 +25,6 @@ const killedByHero = ref("");
 const respawnTimer = ref(0);
 const killMessages = ref([]); // { id, text }
 
-
 // Game State
 let players = [];
 let projectiles = [];
@@ -97,11 +96,11 @@ onMounted(async () => {
 
   socket.value.on("visual_effect", (data) => {
     if (data.type === "shockwave") {
-        spawnExplosion(data.x, data.y, data.color || "#ffffff"); 
-        // Could be enhanced with a ring later, but explosion is good for now
+      spawnExplosion(data.x, data.y, data.color || "#ffffff");
+      // Could be enhanced with a ring later, but explosion is good for now
     } else if (data.type === "poison_hit") {
-        // Spawn green bubbles on victim
-        spawnExplosion(data.x, data.y, "#32cd32"); 
+      // Spawn green bubbles on victim
+      spawnExplosion(data.x, data.y, "#32cd32");
     }
   });
 
@@ -109,12 +108,10 @@ onMounted(async () => {
     const id = Date.now();
     killMessages.value.push({ id, text: `YOU ELIMINATED ${data.victim}` });
     setTimeout(() => {
-      const idx = killMessages.value.findIndex(m => m.id === id);
+      const idx = killMessages.value.findIndex((m) => m.id === id);
       if (idx !== -1) killMessages.value.splice(idx, 1);
     }, 3000);
   });
-
-
 
   socket.value.on("server_update", (state) => {
     players = state.players;
@@ -128,11 +125,13 @@ onMounted(async () => {
       maxSkillCD.value = me.maxSkillCD || 5000;
       isDead.value = !!me.isDead;
       if (isDead.value) {
-         killedBy.value = me.killedBy || "Unknown";
-         killedByHero.value = me.killedByHero || "?";
+        killedBy.value = me.killedBy || "Unknown";
+        killedByHero.value = me.killedByHero || "?";
       }
       if (isDead.value && me.respawnTime) {
-        respawnTimer.value = Math.ceil(Math.max(0, me.respawnTime - Date.now()) / 1000);
+        respawnTimer.value = Math.ceil(
+          Math.max(0, me.respawnTime - Date.now()) / 1000
+        );
       }
     } else {
       // Fallback if player dead or not found (and not in list yet)
@@ -349,12 +348,12 @@ const drawMap = (ctx) => {
 
     // OPTIMIZATION: Viewport Culling (Don't draw off-screen)
     if (
-        screenX + obs.w < -50 ||
-        screenX > screenW + 50 ||
-        screenY + obs.h < -50 ||
-        screenY > screenH + 50
+      screenX + obs.w < -50 ||
+      screenX > screenW + 50 ||
+      screenY + obs.h < -50 ||
+      screenY > screenH + 50
     ) {
-        return;
+      return;
     }
 
     ctx.fillStyle = "#11111a";
@@ -398,10 +397,15 @@ const createParticle = (x, y, color, speed, life) => {
 
 const spawnExplosion = (x, y, color) => {
   for (let i = 0; i < 30; i++) {
-    createParticle(x, y, color, 5 + Math.random() * 10, 30 + Math.random() * 20);
+    createParticle(
+      x,
+      y,
+      color,
+      5 + Math.random() * 10,
+      30 + Math.random() * 20
+    );
   }
 };
-
 
 const updateParticles = () => {
   for (let i = particles.length - 1; i >= 0; i--) {
@@ -428,6 +432,67 @@ const drawProjectiles = (ctx) => {
     // Skip mines here if they are in 'entities' array, usually projectiles are bullets
     if (p.type === "MINE") return;
 
+    // MINE PROJECTILE (Techno)
+    if (p.type === "MINE_PROJ") {
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffaa00";
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+      // Pulsing effect for sticky mine
+      if (Math.abs(p.vx) < 1 && Math.abs(p.vy) < 1) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, 8 + Math.sin(Date.now() / 200) * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255, 170, 0, 0.5)";
+        ctx.stroke();
+      }
+      return;
+    }
+
+    // LAVA WAVE (Magma)
+    if (p.type === "LAVA_WAVE") {
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      const radius = 25; // Slightly larger
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      const angle = Math.atan2(p.vy, p.vx);
+      ctx.rotate(angle);
+
+      // Layer 1: Core (Yellow/White)
+      ctx.fillStyle = "#fff700";
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 0.6, -Math.PI / 2, Math.PI / 2);
+      ctx.fill();
+
+      // Layer 2: Magma (Orange)
+      ctx.fillStyle = "rgba(255, 69, 0, 0.7)";
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.fill();
+
+      // Layer 3: Glow
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#ff0000";
+      ctx.strokeStyle = "#ff4500";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+
+      // Particles (Dripping Lava)
+      if (Math.random() > 0.7) {
+        createParticle(p.x, p.y, "#ff4500", 2, 10);
+      }
+
+      ctx.restore();
+      return;
+    }
+
     const sx = p.x - cameraX;
     const sy = p.y - cameraY;
 
@@ -435,14 +500,14 @@ const drawProjectiles = (ctx) => {
     ctx.beginPath();
     ctx.arc(sx, sy, 5, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // VISIBILITY FIX: Outline for dark bullets
     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // Glow
-    ctx.shadowColor = p.color === "#000000" ? "#ffffff" : (p.color || "#fff");
+    ctx.shadowColor = p.color === "#000000" ? "#ffffff" : p.color || "#fff";
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.shadowBlur = 0;
@@ -479,6 +544,46 @@ const drawPlayer = (ctx, p) => {
   ctx.rotate(p.angle + Math.PI / 2); // Rotate 90deg so 0rad (Right) becomes Down? No.
   // Facing UP rotated Down = Facing Right. CORRECT.
 
+  // --- STEALTH RING INDICATOR (User Request) ---
+  if (p.invisible && isMe) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, 35, 0, Math.PI * 2);
+    ctx.setLineDash([5, 5]); // Dashed
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; // Visible White Ring
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // DRAW LASER SIGHT (Sniper) - INSIDE drawPlayer or loop
+  if (isMe && (p.hero === "Sniper" || p.heroClass === "Sniper")) {
+    // Check Cooldown
+    if (p.skillCD <= 0) {
+      const cx = 0; // Local coordinates (translated)
+      const cy = 0;
+      const range = 2000;
+
+      // We are already rotated by angle + PI/2
+      // So "Forward" is -Y (Up in screen space) relative to rotation?
+      // Actually, we are drawing in Player Local Space.
+      // drawPlayer translates to X,Y and Rotates.
+      // Mouse Angle is absolute.
+      // If we draw a line here, it will rotate with player.
+      // Line should go "Up" (-Y) relative to player sprite if sprite faces up.
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(0, 0); // Center of player
+      ctx.lineTo(0, -range); // Draw line "Forward"
+      ctx.strokeStyle = "rgba(255, 0, 0, 0.5)"; // Red Laser
+      ctx.lineWidth = 2;
+      ctx.setLineDash([20, 10]); // Dashed
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   if (isMe) {
     // --- AIM RETICLE ---
     // Draw a direction indicator (Laser Sight / Arrow)
@@ -510,37 +615,37 @@ const drawPlayer = (ctx, p) => {
 
   // --- POISON AURA (VIPER EFFECT) ---
   if (p.isPoisoned) {
-      ctx.save();
-      const time = Date.now() / 200;
-      ctx.strokeStyle = "#00FF00"; // Bright Green
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.8;
-      
-      // Bubbling Ring
-      ctx.beginPath();
-      // Radius pulses
-      const r = 35 + Math.sin(time) * 3;
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.stroke();
+    ctx.save();
+    const time = Date.now() / 200;
+    ctx.strokeStyle = "#00FF00"; // Bright Green
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.8;
 
-      // Inner Bubbles
-      ctx.fillStyle = "#32cd32";
-      for(let i=0; i<3; i++) {
-        const angle = (time + i * 2) % (Math.PI*2);
-        const br = 25;
-        const bx = Math.cos(angle) * br;
-        const by = Math.sin(angle) * br;
-        ctx.beginPath();
-        ctx.arc(bx, by, 4, 0, Math.PI*2);
-        ctx.fill();
-      }
-      ctx.restore();
+    // Bubbling Ring
+    ctx.beginPath();
+    // Radius pulses
+    const r = 35 + Math.sin(time) * 3;
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner Bubbles
+    ctx.fillStyle = "#32cd32";
+    for (let i = 0; i < 3; i++) {
+      const angle = (time + i * 2) % (Math.PI * 2);
+      const br = 25;
+      const bx = Math.cos(angle) * br;
+      const by = Math.sin(angle) * br;
+      ctx.beginPath();
+      ctx.arc(bx, by, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // --- ACTIVE SKILL AURA (Energy Pulse) ---
   if (p.isSkillActive || p.shield) {
     const time = Date.now() / 1000; // Seconds
-    
+
     ctx.save();
     ctx.shadowBlur = 10;
     ctx.shadowColor = "#FFD700"; // Gold Glow
@@ -549,27 +654,27 @@ const drawPlayer = (ctx, p) => {
     for (let i = 0; i < 3; i++) {
       // Stagger the waves
       const progress = (time + i * 0.33) % 1; // 0.0 to 1.0
-      
+
       // Radius expands from 25 to 60
       const radius = 30 + progress * 40;
-      
+
       // Alpha fades from 0.8 to 0
       const alpha = 0.8 * (1 - progress);
-      
+
       ctx.beginPath();
       ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      
+
       // Gradient Color: Gold to Cyan
       if (i % 2 === 0) {
-          ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`; // Gold
+        ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`; // Gold
       } else {
-          ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`; // Cyan
+        ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`; // Cyan
       }
-      
+
       ctx.lineWidth = 3 - progress * 2; // Thins out
       ctx.stroke();
     }
-    
+
     // Core Energy
     ctx.beginPath();
     ctx.arc(0, 0, 30, 0, Math.PI * 2);
@@ -599,52 +704,66 @@ const drawPlayer = (ctx, p) => {
     ctx.lineWidth = 2;
     ctx.stroke();
     // Shield
+    // Shield
     if (p.shield) {
-      ctx.beginPath();
-      // Arc centered at Top (-PI/2)
-      ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
-      ctx.strokeStyle = "#00ffff";
-      ctx.lineWidth = 5;
-      ctx.stroke();
+      // CITADEL: 360 Shield if Invincible/Citadel
+      if (p.hero === "Citadel") {
+        ctx.beginPath();
+        ctx.arc(0, 0, 45, 0, Math.PI * 2); // Full Circle
+        ctx.strokeStyle = "#00ffff";
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        // Force Field Effect
+        ctx.fillStyle = "rgba(0, 255, 255, 0.2)";
+        ctx.fill();
+      } else {
+        // Standard Tank Shield (Frontal)
+        ctx.beginPath();
+        // Arc centered at Top (-PI/2)
+        ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
+        ctx.strokeStyle = "#00ffff";
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
     }
   } else if (p.isFrozen) {
-     // IMPROVED FREEZE VISUAL (Ice Crystal Overlay)
-     // Procedural jagged shape
-     ctx.save();
-     ctx.beginPath();
-     const spikes = 8;
-     const outerRadius = 45;
-     const innerRadius = 25;
-     
-     // Shivering effect
-     const shiverX = (Math.random() - 0.5) * 3;
-     const shiverY = (Math.random() - 0.5) * 3;
-     ctx.translate(shiverX, shiverY);
-     
-     for(let i=0; i<spikes; i++) {
-       const step = Math.PI / spikes;
-       const rot = Math.PI / 2 * 3;
-       let x = 0;
-       let y = 0;
-       
-       let ang = i * step * 2 + rot;
-       x = Math.cos(ang) * outerRadius;
-       y = Math.sin(ang) * outerRadius;
-       ctx.lineTo(x, y);
-       
-       ang = i * step * 2 + step + rot;
-       x = Math.cos(ang) * innerRadius;
-       y = Math.sin(ang) * innerRadius;
-       ctx.lineTo(x, y);
-     }
-     ctx.closePath();
-     
-     ctx.fillStyle = "rgba(0, 243, 255, 0.6)";
-     ctx.fill();
-     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-     ctx.lineWidth = 2;
-     ctx.stroke();
-     ctx.restore();
+    // IMPROVED FREEZE VISUAL (Ice Crystal Overlay)
+    // Procedural jagged shape
+    ctx.save();
+    ctx.beginPath();
+    const spikes = 8;
+    const outerRadius = 45;
+    const innerRadius = 25;
+
+    // Shivering effect
+    const shiverX = (Math.random() - 0.5) * 3;
+    const shiverY = (Math.random() - 0.5) * 3;
+    ctx.translate(shiverX, shiverY);
+
+    for (let i = 0; i < spikes; i++) {
+      const step = Math.PI / spikes;
+      const rot = (Math.PI / 2) * 3;
+      let x = 0;
+      let y = 0;
+
+      let ang = i * step * 2 + rot;
+      x = Math.cos(ang) * outerRadius;
+      y = Math.sin(ang) * outerRadius;
+      ctx.lineTo(x, y);
+
+      ang = i * step * 2 + step + rot;
+      x = Math.cos(ang) * innerRadius;
+      y = Math.sin(ang) * innerRadius;
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = "rgba(0, 243, 255, 0.6)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
   } else if (heroClass === "Speed") {
     // SPEED (Arrow/Dart) - Point UP
     ctx.fillStyle = primaryColor;
@@ -800,20 +919,20 @@ const loop = (ctx) => {
       ctx.lineWidth = 2;
       ctx.strokeRect(sx, sy, ent.w, ent.h);
     } else if (ent.type === "DECOY") {
-        // Draw Decoy (REALISTIC: Identical to real player)
-        ctx.save();
-        // ctx.globalAlpha = 1.0; // Default opacity for realism
-        // Reuse drawPlayer logic
-        const fakePlayer = {
-            ...ent,
-            angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
-            hero: ent.heroName,
-            heroClass: ent.heroClass,
-            shield: false,
-            dead: false
-        };
-        drawPlayer(ctx, fakePlayer);
-        ctx.restore();
+      // Draw Decoy (REALISTIC: Identical to real player)
+      ctx.save();
+      // ctx.globalAlpha = 1.0; // Default opacity for realism
+      // Reuse drawPlayer logic
+      const fakePlayer = {
+        ...ent,
+        angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
+        hero: ent.heroName,
+        heroClass: ent.heroClass,
+        shield: false,
+        dead: false,
+      };
+      drawPlayer(ctx, fakePlayer);
+      ctx.restore();
     }
   });
 
@@ -830,22 +949,26 @@ const loop = (ctx) => {
 <template>
   <div class="game-view">
     <canvas ref="canvasRef" class="game-canvas"></canvas>
-    
+
     <!-- Kill Feed -->
     <div class="kill-feed">
-        <div v-for="msg in killMessages" :key="msg.id" class="kill-msg">
-            {{ msg.text }}
-        </div>
+      <div v-for="msg in killMessages" :key="msg.id" class="kill-msg">
+        {{ msg.text }}
+      </div>
     </div>
 
     <!-- Respawn Overlay -->
 
     <div class="respawn-overlay" v-if="isDead">
-        <h1>YOU DIED</h1>
-        <h2 style="color: #ff3333; margin-bottom: 5px;">ELIMINATED BY {{ killedBy }}</h2>
-        <h3 style="color: #00f3ff; margin-bottom: 20px;">HERO: {{ killedByHero }}</h3>
-        <div class="respawn-timer">{{ respawnTimer }}</div>
-        <p>RESPAWNING...</p>
+      <h1>YOU DIED</h1>
+      <h2 style="color: #ff3333; margin-bottom: 5px">
+        ELIMINATED BY {{ killedBy }}
+      </h2>
+      <h3 style="color: #00f3ff; margin-bottom: 20px">
+        HERO: {{ killedByHero }}
+      </h3>
+      <div class="respawn-timer">{{ respawnTimer }}</div>
+      <p>RESPAWNING...</p>
     </div>
 
     <div class="hud" v-if="!isDead">
@@ -955,7 +1078,7 @@ const loop = (ctx) => {
 
 .kill-msg {
   color: #ff0033;
-  font-family: 'Segoe UI', sans-serif;
+  font-family: "Segoe UI", sans-serif;
   font-size: 14px; /* Much smaller */
   font-weight: 800;
   text-transform: uppercase;
@@ -965,12 +1088,17 @@ const loop = (ctx) => {
 }
 
 @keyframes popIn {
-  from { opacity: 0; transform: scale(0.5); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .game-canvas {
-
   display: block;
 }
 
@@ -1064,7 +1192,7 @@ const loop = (ctx) => {
   letter-spacing: 10px;
   text-shadow: 0 0 20px #ff0033;
   margin-bottom: 2rem;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
 }
 
 .respawn-timer {
@@ -1082,8 +1210,12 @@ const loop = (ctx) => {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .skill-box {

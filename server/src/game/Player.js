@@ -50,7 +50,7 @@ class Player {
     // Basic movement logic
     // Basic movement logic
     const moveStep = this.speed * dt;
-    
+
     // --- X AXIS MOVEMENT ---
     let dx = 0;
     if (this.keys.a) dx -= moveStep;
@@ -129,9 +129,11 @@ class Player {
       vy,
       ownerId: this.id,
       color: this.freezeShotsActive ? "#00ffff" : this.color,
-      life: 2000,
       effect: this.freezeShotsActive ? "FREEZE" : null,
-      // damage: 15 (Default handled by server if omitted)
+      damage: this.damageBuff ? 30 : this.minesActive ? 60 : 15, // Mines high damage
+      type: this.minesActive ? "MINE_PROJ" : "PROJECTILE",
+      friction: this.minesActive ? true : false, // Logic flag for friction
+      life: this.minesActive ? 12000 : 2000,
     };
   }
 
@@ -148,7 +150,7 @@ class Player {
 
     // === TANK ===
     if (name === "Vanguard") {
-      this.cooldowns.skill += 3000; 
+      this.cooldowns.skill += 3000;
       duration = 3000;
       this.shieldActive = true;
       setTimeout(() => (this.shieldActive = false), 3000);
@@ -172,11 +174,10 @@ class Player {
     } else if (name === "Goliath") {
       this.cooldowns.skill += 3000;
       duration = 3000;
-      this.isRooted = true;
       this.shieldActive = true;
       this.hp = Math.min(this.maxHp, this.hp + 100);
       setTimeout(() => {
-        this.isRooted = false;
+        // this.isRooted = false; // Removed Root
         this.shieldActive = false;
       }, 3000);
     }
@@ -189,9 +190,9 @@ class Player {
       this.speed = this.baseSpeed * 3.5;
       this.isPhasing = true; // Pass through walls
       setTimeout(() => {
-          this.speed = this.baseSpeed;
-          this.isPhasing = false;
-          this.checkUnstuck(); // Ensure not stuck in wall
+        this.speed = this.baseSpeed;
+        this.isPhasing = false;
+        this.checkUnstuck(); // Ensure not stuck in wall
       }, 750);
     } else if (name === "Volt") {
       this.cooldowns.skill += 2500;
@@ -240,7 +241,8 @@ class Player {
         ownerId: this.id,
         color: "#fff",
         life: 3000,
-        damage: 60,
+        damage: 1000, // One Shot
+        penetrateWalls: true, // Wall Hack
       };
     } else if (name === "Shadow") {
       this.cooldowns.skill += 5000;
@@ -267,117 +269,133 @@ class Player {
       }
       result = projs;
     }
-    
+
     // --- NEW HEROES (EXPANSION) ---
     else if (name === "Citadel") {
-        duration = 3000;
-        // Fortress Mode: Invincible but Immobile
-        this.isInvincible = true; 
-        this.speed = 0;
-        this.shieldActive = true; 
-        setTimeout(() => {
-            this.isInvincible = false;
-            this.speed = this.baseSpeed;
-            this.shieldActive = false;
-        }, 3000);
+      duration = 3000;
+      // Fortress Mode: Invincible but Immobile
+      this.isInvincible = true;
+      this.speed = 0;
+      this.shieldActive = true;
+      setTimeout(() => {
+        this.isInvincible = false;
+        // this.speed = this.baseSpeed; // REMOVED Immobility
+        this.shieldActive = false;
+      }, 3000);
     } else if (name === "Magma") {
-        duration = 500;
-        // Eruption: Spawn Lava Mines
-        const mines = [];
-        for(let i=0; i<5; i++) {
-             mines.push({
-                type: "MINE",
-                id: Math.random().toString(36).substr(2, 9),
-                x: this.x + (Math.random()*40 - 20),
-                y: this.y + (Math.random()*40 - 20),
-                ownerId: this.id,
-                damage: 50,
-                life: 10000 // 10s
-             });
-        }
-        result = mines;
+      duration = 500;
+      // Lava Wave: 3 Projectiles Fan
+      const projs = [];
+      const fanAngle = 0.3; // Spread
+      for (let i = -1; i <= 1; i++) {
+        const angle = this.mouseAngle + i * fanAngle;
+        projs.push({
+          type: "LAVA_WAVE",
+          id: Math.random().toString(36).substr(2, 9),
+          x: this.x,
+          y: this.y,
+          vx: Math.cos(angle) * 700,
+          vy: Math.sin(angle) * 700,
+          ownerId: this.id,
+          damage: 80,
+          life: 1500, // Short range wave
+          maxLife: 1500, // For Scaling
+          penetrateEnemies: true,
+        });
+      }
+      result = projs;
     } else if (name === "Storm") {
-        duration = 500;
-        // Overload: 16 Lightning Bolts (Buffed)
-        const projs = [];
-        for (let i = 0; i < 16; i++) {
-            const angle = (i / 16) * Math.PI * 2;
-            projs.push({
-              type: "PROJECTILE",
-              id: Math.random().toString(36).substr(2, 9),
-              x: this.x,
-              y: this.y,
-              vx: Math.cos(angle) * 800, // Faster
-              vy: Math.sin(angle) * 800,
-              ownerId: this.id,
-              color: "#ffff00", 
-              life: 1000,
-            });
-        }
-        result = projs;
+      duration = 500;
+      // Overload: 16 Lightning Bolts (Buffed)
+      const projs = [];
+      for (let i = 0; i < 16; i++) {
+        const angle = (i / 16) * Math.PI * 2;
+        projs.push({
+          type: "PROJECTILE",
+          id: Math.random().toString(36).substr(2, 9),
+          x: this.x,
+          y: this.y,
+          vx: Math.cos(angle) * 800, // Faster
+          vy: Math.sin(angle) * 800,
+          ownerId: this.id,
+          color: "#ffff00",
+          life: 1000,
+        });
+      }
+      result = projs;
     } else if (name === "Viper") {
-        duration = 5000;
-        // Venom: Poisonous shots
-        this.isPoisonous = true;
-        setTimeout(() => (this.isPoisonous = false), 5000);
+      duration = 5000;
+      // Venom: Poisonous shots
+      this.isPoisonous = true;
+      setTimeout(() => (this.isPoisonous = false), 5000);
     } else if (name === "Mirage") {
-        duration = 4000;
-        // Decoy: Spawn a fake player and go invisible
-        this.isInvisible = true;
-        this.speed = this.baseSpeed * 1.5;
-        setTimeout(() => {
-            this.isInvisible = false;
-            this.speed = this.baseSpeed;
-        }, 4000);
-        
-        result = {
-            type: "DECOY",
-            x: this.x,
-            y: this.y,
-            ownerId: this.id,
-            heroName: this.hero.name,
-            heroClass: this.hero.class,
-            username: this.username || "Unknown", // FAKE NAME
-            hp: this.hp, // FAKE HP (Visual)
-            maxHp: this.maxHp,
-            color: this.color,
-            vx: Math.cos(this.mouseAngle) * this.baseSpeed, 
-            vy: Math.sin(this.mouseAngle) * this.baseSpeed,
-            life: 3000
-        };
+      duration = 4000;
+      // Decoy: Spawn a fake player and go invisible
+      this.isInvisible = true;
+      this.speed = this.baseSpeed * 1.5;
+      setTimeout(() => {
+        this.isInvisible = false;
+        this.speed = this.baseSpeed;
+      }, 4000);
+
+      result = {
+        type: "DECOY",
+        x: this.x,
+        y: this.y,
+        ownerId: this.id,
+        heroName: this.hero.name,
+        heroClass: this.hero.class,
+        username: this.username || "Unknown", // FAKE NAME
+        hp: this.hp, // FAKE HP (Visual)
+        maxHp: this.maxHp,
+        color: this.color,
+        vx: Math.cos(this.mouseAngle) * this.baseSpeed,
+        vy: Math.sin(this.mouseAngle) * this.baseSpeed,
+        life: 3000,
+      };
     } else if (name === "Jumper") {
-        duration = 500;
-        // Blink (Same as Spectre)
-        const maxDist = 350; // Further than Spectre
-        let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
-        let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
-        
-        // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
-        // ... (Simplified check: Clamp to map)
-        this.x = Math.max(0, Math.min(MapData.width, targetX));
-        this.y = Math.max(0, Math.min(MapData.height, targetY));
+      duration = 500;
+      // Blink (Same as Spectre)
+      const maxDist = 350; // Further than Spectre
+      let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
+      let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
+
+      // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
+      // ... (Simplified check: Clamp to map)
+      this.x = Math.max(0, Math.min(MapData.width, targetX));
+      this.y = Math.max(0, Math.min(MapData.height, targetY));
     }
 
     // === SUPPORT ===
     else if (name === "Techno") {
-      duration = 500;
-      result = { type: "MINE", x: this.x, y: this.y, ownerId: this.id, life: 6000 };
+      duration = 3000;
+      this.cooldowns.skill += 3000;
+      // Buff: Speed + Shoot Mines
+      this.minesActive = true; // Flag for shoot()
+      this.speed = this.baseSpeed * 1.5;
+      setTimeout(() => {
+        this.minesActive = false;
+        this.speed = this.baseSpeed;
+      }, 3000);
+      // result = ... REMOVED Drop Mine
+      result = null; // No immediate effect, just buff
     } else if (name === "Engineer") {
       this.cooldowns.skill += 5000;
       duration = 5000;
       // Force Field Wall
       const wx = this.x + Math.cos(this.mouseAngle) * 50;
-         /// ... existing ...
       const wy = this.y + Math.sin(this.mouseAngle) * 50;
+
+      // Fix: Ensure object is returned correctly
       result = {
         type: "WALL_TEMP",
-    //...
+        ownerId: this.id,
         x: wx - 40,
         y: wy - 10,
         w: 80,
         h: 20,
         life: 5000,
-        angle: this.mouseAngle,
+        angle: this.mouseAngle, // Just store, server uses AABB so angle visual only
       };
     } else if (name === "Medic") {
       duration = 500;
@@ -387,14 +405,14 @@ class Player {
 
     // === COMMON AURA LOGIC ===
     if (duration > 0 && name !== "Shadow") {
-       setTimeout(() => {
-          this.isSkillActive = false;
-       }, duration);
+      setTimeout(() => {
+        this.isSkillActive = false;
+      }, duration);
     } else if (name !== "Shadow") {
-       this.isSkillActive = false;
+      this.isSkillActive = false;
     } else {
-       // Shadow: ensure false
-       this.isSkillActive = false;
+      // Shadow: ensure false
+      this.isSkillActive = false;
     }
 
     return result;
@@ -420,9 +438,18 @@ class Player {
 
     // 2. Try to find a safe spot nearby (Spiral Search)
     const offsets = [
-      { x: 0, y: -50 }, { x: 0, y: 50 }, { x: -50, y: 0 }, { x: 50, y: 0 },
-      { x: 50, y: 50 }, { x: -50, y: -50 }, { x: 50, y: -50 }, { x: -50, y: 50 },
-      { x: 0, y: -100 }, { x: 0, y: 100 }, { x: -100, y: 0 }, { x: 100, y: 0 }
+      { x: 0, y: -50 },
+      { x: 0, y: 50 },
+      { x: -50, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 50 },
+      { x: -50, y: -50 },
+      { x: 50, y: -50 },
+      { x: -50, y: 50 },
+      { x: 0, y: -100 },
+      { x: 0, y: 100 },
+      { x: -100, y: 0 },
+      { x: 100, y: 0 },
     ];
 
     for (const off of offsets) {
@@ -453,7 +480,7 @@ class Player {
 
     // 3. Fallback: Safety Spawn (Don't Kill)
     // If deep stuck, warp to map center or default spawn
-    this.x = 400; 
+    this.x = 400;
     this.y = 300;
   }
 }

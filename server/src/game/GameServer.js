@@ -3,7 +3,6 @@ const { Hero, User } = require("../models");
 const MapData = require("./MapData");
 const jwt = require("jsonwebtoken");
 
-
 class GameServer {
   constructor(io) {
     this.io = io;
@@ -19,127 +18,144 @@ class GameServer {
       socket.on("join_game", async ({ heroId, username, skinColor, token }) => {
         // SECURITY: Verify Token to prevent Username Spoofing via LocalStorage
         if (token) {
-            try {
-                // DEBUG LOGGING
-                // console.log("Verifying token:", token.substring(0, 10) + "...");
-                const decoded = jwt.verify(token, process.env.JWT_SECRET || "default_secret_key");
-                
-                if (decoded && decoded.id) {
-                    // Token contains { id: ... } (See auth.js)
-                    // We must fetch the User to get the Username
-                    const dbUser = await User.findByPk(decoded.id);
-                    if (dbUser) {
-                        username = dbUser.username;
-                        console.log(`[AUTH] Verified user via Token ID: ${username}`);
-                    } else {
-                        console.warn("[AUTH] Token valid but user ID not found in DB");
-                        username = "Unknown";
-                    }
-                } else if (decoded && decoded.username) {
-                     // Fallback for legacy tokens if any
-                     username = decoded.username;
-                }
-            } catch (err) {
-                console.warn(`[AUTH] Invalid Token for ${socket.id}: ${err.message}`);
-                username = "Unknown"; // Force Guest
-            }
+          try {
+            // DEBUG LOGGING
+            // console.log("Verifying token:", token.substring(0, 10) + "...");
+            const decoded = jwt.verify(
+              token,
+              process.env.JWT_SECRET || "default_secret_key"
+            );
 
+            if (decoded && decoded.id) {
+              // Token contains { id: ... } (See auth.js)
+              // We must fetch the User to get the Username
+              const dbUser = await User.findByPk(decoded.id);
+              if (dbUser) {
+                username = dbUser.username;
+                console.log(`[AUTH] Verified user via Token ID: ${username}`);
+              } else {
+                console.warn("[AUTH] Token valid but user ID not found in DB");
+                username = "Unknown";
+              }
+            } else if (decoded && decoded.username) {
+              // Fallback for legacy tokens if any
+              username = decoded.username;
+            }
+          } catch (err) {
+            console.warn(
+              `[AUTH] Invalid Token for ${socket.id}: ${err.message}`
+            );
+            username = "Unknown"; // Force Guest
+          }
         } else {
-             username = "Unknown"; // No Token = Guest
+          username = "Unknown"; // No Token = Guest
         }
 
         // SECURITY: Prevent Hero Switching while active
         // SECURITY: Prevent Hero Switching while active
         if (this.players.has(socket.id)) {
-            return;
+          return;
         }
 
         // Fetch hero stats from DB
         try {
           let hero = await Hero.findByPk(heroId);
-          
+
           // SECURITY: Verify Ownership (Strict)
           let isAllowed = false;
           let user = null; // Declare in wider scope
 
           if (hero && hero.price === 0) {
-              isAllowed = true; // Free heroes are always allowed
+            isAllowed = true; // Free heroes are always allowed
           } else if (hero && username && username !== "Unknown") {
-             user = await User.findOne({ 
-                where: { username },
-                include: [{ model: Hero, as: "unlockedHeroes" }]
-             });
-             
-             if (user) {
-                // Check if user actually owns this paid hero
-                if (user.unlockedHeroes.some(h => h.id === hero.id)) {
-                    isAllowed = true;
-                }
-             }
+            user = await User.findOne({
+              where: { username },
+              include: [{ model: Hero, as: "unlockedHeroes" }],
+            });
+
+            if (user) {
+              // Check if user actually owns this paid hero
+              if (user.unlockedHeroes.some((h) => h.id === hero.id)) {
+                isAllowed = true;
+              }
+            }
           }
 
           if (hero && !isAllowed) {
-             console.warn(`[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`);
-             
-             // Fallback Logic: Try "Previous/Equipped" Hero
-             let fallbackHeroId = 1; // Default
-             if (user && user.equippedHeroId) {
-                  // Verify user owns their equipped hero too (sanity check)
-                  if (!user.unlockedHeroes) { // Re-check if needed, but we have it from include above
-                       // Should be loaded
-                  }
-                  // Check if equippedHeroId is valid owned hero
-                   if (user.unlockedHeroes.some(h => h.id === user.equippedHeroId)) {
-                        fallbackHeroId = user.equippedHeroId;
-                        console.log(`[SECURITY] Reverting to Last Equipped Valid Hero (ID: ${fallbackHeroId})`);
-                   }
-             }
-             
-             hero = await Hero.findByPk(fallbackHeroId); 
-             if (!hero) hero = await Hero.findOne({ where: { price: 0 } });
+            console.warn(
+              `[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`
+            );
+
+            // Fallback Logic: Try "Previous/Equipped" Hero
+            let fallbackHeroId = 1; // Default
+            if (user && user.equippedHeroId) {
+              // Verify user owns their equipped hero too (sanity check)
+              if (!user.unlockedHeroes) {
+                // Re-check if needed, but we have it from include above
+                // Should be loaded
+              }
+              // Check if equippedHeroId is valid owned hero
+              if (
+                user.unlockedHeroes.some((h) => h.id === user.equippedHeroId)
+              ) {
+                fallbackHeroId = user.equippedHeroId;
+                console.log(
+                  `[SECURITY] Reverting to Last Equipped Valid Hero (ID: ${fallbackHeroId})`
+                );
+              }
+            }
+
+            hero = await Hero.findByPk(fallbackHeroId);
+            if (!hero) hero = await Hero.findOne({ where: { price: 0 } });
           }
 
           if (hero) {
             // Check Reconnection
             let restored = false;
             if (username && username !== "Unknown") {
-               const saved = this.disconnectedPlayers.get(username);
-               // Check if same Hero (Use verified hero.id)
-               if (saved && saved.player.hero.id == hero.id) {
-                 // Restore State
-                 clearTimeout(saved.timeout);
-                 this.disconnectedPlayers.delete(username);
-                 
-                 const p = saved.player;
-                 const oldId = p.id; // Capture old ID
-                 p.id = socket.id; // Update Socket ID
-                 p.keys = { w: false, a: false, s: false, d: false, space: false }; // Reset inputs
-                 
-                 // Transfer ownership of Mines/Projectiles
-                 this.entities.forEach(ent => {
-                    if (ent.ownerId === oldId) ent.ownerId = socket.id;
-                 });
-                 this.projectiles.forEach(proj => {
-                    if (proj.ownerId === oldId) proj.ownerId = socket.id;
-                 });
+              const saved = this.disconnectedPlayers.get(username);
+              // Check if same Hero (Use verified hero.id)
+              if (saved && saved.player.hero.id == hero.id) {
+                // Restore State
+                clearTimeout(saved.timeout);
+                this.disconnectedPlayers.delete(username);
 
-                 this.players.set(socket.id, p);
-                 restored = true;
-                 console.log(`Restored session for ${username}`);
-               }
+                const p = saved.player;
+                const oldId = p.id; // Capture old ID
+                p.id = socket.id; // Update Socket ID
+                p.keys = {
+                  w: false,
+                  a: false,
+                  s: false,
+                  d: false,
+                  space: false,
+                }; // Reset inputs
+
+                // Transfer ownership of Mines/Projectiles
+                this.entities.forEach((ent) => {
+                  if (ent.ownerId === oldId) ent.ownerId = socket.id;
+                });
+                this.projectiles.forEach((proj) => {
+                  if (proj.ownerId === oldId) proj.ownerId = socket.id;
+                });
+
+                this.players.set(socket.id, p);
+                restored = true;
+                console.log(`Restored session for ${username}`);
+              }
             }
 
             if (!restored) {
-               this.players.set(
+              this.players.set(
                 socket.id,
                 new Player(socket.id, hero.toJSON(), username, skinColor)
-               );
-               const player = this.players.get(socket.id);
-               const spawn = this.getSafeSpawn();
-               player.x = spawn.x;
-               player.y = spawn.y;
+              );
+              const player = this.players.get(socket.id);
+              const spawn = this.getSafeSpawn();
+              player.x = spawn.x;
+              player.y = spawn.y;
             }
-            
+
             socket.join("game_room");
             // Send initial Game State AND Map Data
             socket.emit("game_init", {
@@ -181,58 +197,69 @@ class GameServer {
                   const idx = this.entities.indexOf(item);
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
-              } else if (item.type === "PROJECTILE") {
+              } else if (
+                item.type === "PROJECTILE" ||
+                item.type === "LAVA_WAVE"
+              ) {
                 this.projectiles.push(item);
               } else if (item.type === "DECOY") {
-                 this.entities.push(item);
-                 setTimeout(() => {
-                   const idx = this.entities.indexOf(item);
-                   if (idx > -1) this.entities.splice(idx, 1);
-                 }, item.life);
+                this.entities.push(item);
+                setTimeout(() => {
+                  const idx = this.entities.indexOf(item);
+                  if (idx > -1) this.entities.splice(idx, 1);
+                }, item.life);
               } else if (item.type === "SHOCKWAVE") {
-                 // Immediate AoE Effect
-                 for (const [pid, p] of this.players) {
-                    if (pid === item.ownerId) continue;
-                    if (p.isDead) continue;
-                    
-                    const dx = p.x - item.x;
-                    const dy = p.y - item.y;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    
-                    if (dist < item.radius) {
-                        // Apply Knockback
-                        const angle = Math.atan2(dy, dx);
-                        const force = item.knockback;
-                        
-                        // Simple wall collision check for knockback (optional, but good for stability)
-                        let nx = p.x + Math.cos(angle) * force;
-                        let ny = p.y + Math.sin(angle) * force;
-                        
-                        // Update Position
-                        p.x = Math.max(0, Math.min(1600, nx));
-                        p.y = Math.max(0, Math.min(1200, ny));
-                        
-                        // Apply Damage
-                        p.hp -= item.damage;
-                        
-                        // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
-                        // But we want kill credit immediately if possible.
-                        // For simplicity, let the main loop cleanup 'hp <= 0'
-                        if (p.hp <= 0) {
-                             const killer = this.players.get(item.ownerId);
-                             if (killer) {
-                                  killer.kills++;
-                                  killer.hp = Math.min(killer.maxHp, killer.hp + 50);
-                                  this.awardCoins(killer.username, 50);
-                                  this.io.to(item.ownerId).emit("kill_confirmed", { victim: p.username || p.hero.name });
-                                  p.killedBy = killer.username;
-                                  p.killedByHero = killer.hero.name;
-                             }
-                        }
+                // Immediate AoE Effect
+                for (const [pid, p] of this.players) {
+                  if (pid === item.ownerId) continue;
+                  if (p.isDead) continue;
+
+                  const dx = p.x - item.x;
+                  const dy = p.y - item.y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+
+                  if (dist < item.radius) {
+                    // Apply Knockback
+                    const angle = Math.atan2(dy, dx);
+                    const force = item.knockback;
+
+                    // Simple wall collision check for knockback (optional, but good for stability)
+                    let nx = p.x + Math.cos(angle) * force;
+                    let ny = p.y + Math.sin(angle) * force;
+
+                    // Update Position
+                    p.x = Math.max(0, Math.min(1600, nx));
+                    p.y = Math.max(0, Math.min(1200, ny));
+
+                    // Apply Damage
+                    p.hp -= item.damage;
+
+                    // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
+                    // But we want kill credit immediately if possible.
+                    // For simplicity, let the main loop cleanup 'hp <= 0'
+                    if (p.hp <= 0) {
+                      const killer = this.players.get(item.ownerId);
+                      if (killer) {
+                        killer.kills++;
+                        killer.hp = Math.min(killer.maxHp, killer.hp + 50);
+                        this.awardCoins(killer.username, 50);
+                        this.io.to(item.ownerId).emit("kill_confirmed", {
+                          victim: p.username || p.hero.name,
+                        });
+                        p.killedBy = killer.username;
+                        p.killedByHero = killer.hero.name;
+                      }
                     }
-                 }
-                 // Emulate Visual Explosion
-                 this.io.emit("visual_effect", { type: "shockwave", x: item.x, y: item.y, radius: item.radius, color: item.color });
+                  }
+                }
+                // Emulate Visual Explosion
+                this.io.emit("visual_effect", {
+                  type: "shockwave",
+                  x: item.x,
+                  y: item.y,
+                  radius: item.radius,
+                  color: item.color,
+                });
               }
             });
           }
@@ -242,27 +269,27 @@ class GameServer {
       socket.on("disconnect", () => {
         const p = this.players.get(socket.id);
         if (p) {
-           this.players.delete(socket.id);
-           
-           // Save State if User is known
-           if (p.username && p.username !== "Unknown") {
-              // 15 Seconds Grace Period
-              const timeout = setTimeout(() => {
-                 this.disconnectedPlayers.delete(p.username);
-                 // Cleanup Entities (Mines/Walls) for permanently disconnected player
-                 // Remove items owned by the old socket ID
-                 for (let i = this.entities.length - 1; i >= 0; i--) {
-                    if (this.entities[i].ownerId === socket.id) {
-                        this.entities.splice(i, 1);
-                    }
-                 }
-              }, 15000);
-              
-              this.disconnectedPlayers.set(p.username, {
-                 player: p,
-                 timeout
-              });
-           }
+          this.players.delete(socket.id);
+
+          // Save State if User is known
+          if (p.username && p.username !== "Unknown") {
+            // 15 Seconds Grace Period
+            const timeout = setTimeout(() => {
+              this.disconnectedPlayers.delete(p.username);
+              // Cleanup Entities (Mines/Walls) for permanently disconnected player
+              // Remove items owned by the old socket ID
+              for (let i = this.entities.length - 1; i >= 0; i--) {
+                if (this.entities[i].ownerId === socket.id) {
+                  this.entities.splice(i, 1);
+                }
+              }
+            }, 15000);
+
+            this.disconnectedPlayers.set(p.username, {
+              player: p,
+              timeout,
+            });
+          }
         }
       });
     });
@@ -285,43 +312,43 @@ class GameServer {
         // Respawn Logic
         if (player.isDead) {
           if (Date.now() > player.respawnTime) {
-             // Respawn Now - Restore Stats
-             player.isDead = false;
-             player.hp = player.maxHp;
-             // Coordinates already set at death time
-             player.cooldowns.skill = 0;
-             player.cooldowns.shoot = 0;
-             player.freezeEndTime = 0;
-             player.isFrozen = false;
-             player.killedBy = null;
-             player.killedByHero = null;
+            // Respawn Now - Restore Stats
+            player.isDead = false;
+            player.hp = player.maxHp;
+            // Coordinates already set at death time
+            player.cooldowns.skill = 0;
+            player.cooldowns.shoot = 0;
+            player.freezeEndTime = 0;
+            player.isFrozen = false;
+            player.killedBy = null;
+            player.killedByHero = null;
           } else {
-             // Still dead, send state but skip update
+            // Still dead, send state but skip update
 
-             state.players.push({
-                id: player.id,
-                x: player.x,
-                y: player.y,
-                hp: 0, 
-                maxHp: player.maxHp,
-                hero: player.hero.name,
-                heroClass: player.hero.class,
-                color: player.color,
-                angle: player.mouseAngle,
-                shield: false,
-                invisible: false,
-                isFrozen: false,
-                isDead: true,
-                killedBy: player.killedBy,
-                killedByHero: player.killedByHero,
-                respawnTime: player.respawnTime,
+            state.players.push({
+              id: player.id,
+              x: player.x,
+              y: player.y,
+              hp: 0,
+              maxHp: player.maxHp,
+              hero: player.hero.name,
+              heroClass: player.hero.class,
+              color: player.color,
+              angle: player.mouseAngle,
+              shield: false,
+              invisible: false,
+              isFrozen: false,
+              isDead: true,
+              killedBy: player.killedBy,
+              killedByHero: player.killedByHero,
+              respawnTime: player.respawnTime,
 
-                skillCD: 0,
-                username: player.username,
-                maxSkillCD: player.hero.stats.cooldown,
-                kills: player.kills,
-             });
-             return; 
+              skillCD: 0,
+              username: player.username,
+              maxSkillCD: player.hero.stats.cooldown,
+              kills: player.kills,
+            });
+            return;
           }
         }
 
@@ -333,8 +360,8 @@ class GameServer {
           const proj = player.shoot();
           if (proj) {
             if (player.isPoisonous) {
-                proj.isPoison = true; 
-                proj.color = "#32cd32"; // FORCE GREEN VISUAL
+              proj.isPoison = true;
+              proj.color = "#32cd32"; // FORCE GREEN VISUAL
             }
             this.projectiles.push(proj);
           }
@@ -374,6 +401,17 @@ class GameServer {
         p.y += p.vy * dt;
         p.life -= dt * 1000;
 
+        // FRICTION LOGIC (Techno Mines)
+        if (p.friction) {
+          p.vx *= 0.95; // Slow down
+          p.vy *= 0.95;
+          // Stop completely if slow enough
+          if (Math.abs(p.vx) < 10 && Math.abs(p.vy) < 10) {
+            p.vx = 0;
+            p.vy = 0;
+          }
+        }
+
         // Basic Bounds/Lifespan check
         if (p.life <= 0 || p.x < 0 || p.x > 1600 || p.y < 0 || p.y > 1200) {
           this.projectiles.splice(i, 1);
@@ -383,16 +421,42 @@ class GameServer {
         // Collision with Map Obstacles (Walls)
         let hitWall = false;
         const pRect = { x: p.x - 5, y: p.y - 5, w: 10, h: 10 }; // Approx projectile size
-        for (const obs of MapData.obstacles) {
-          // Check if bullet overlaps with obstacle
-          if (
-            pRect.x < obs.x + obs.w &&
-            pRect.x + pRect.w > obs.x &&
-            pRect.y < obs.y + obs.h &&
-            pRect.y + pRect.h > obs.y
-          ) {
-            hitWall = true;
-            break;
+
+        // SNIPER: Penetrate Walls
+        // LAVA WAVE: Also penetrates walls? Maybe not obstacles, just enemies? "Vague de lave" usually flows.
+        // Let's say Lava Wave blocked by walls for now unless requested.
+
+        if (!p.penetrateWalls) {
+          // TECHNO MINE: Sticky Walls?
+          // If friction is true (Mine), and hits wall -> Stick (Stop)
+          if (p.friction) {
+            for (const obs of MapData.obstacles) {
+              if (
+                pRect.x < obs.x + obs.w &&
+                pRect.x + pRect.w > obs.x &&
+                pRect.y < obs.y + obs.h &&
+                pRect.y + pRect.h > obs.y
+              ) {
+                // STICK TO WALL
+                p.vx = 0;
+                p.vy = 0;
+                hitWall = false; // Don't destroy
+                break;
+              }
+            }
+          } else {
+            // Normal Bullet / Lava
+            for (const obs of MapData.obstacles) {
+              if (
+                pRect.x < obs.x + obs.w &&
+                pRect.x + pRect.w > obs.x &&
+                pRect.y < obs.y + obs.h &&
+                pRect.y + pRect.h > obs.y
+              ) {
+                hitWall = true;
+                break;
+              }
+            }
           }
         }
 
@@ -401,11 +465,66 @@ class GameServer {
           continue;
         }
 
+        // ENGINEER: Wall Reflection
+        // Check dynamic walls (WALL_TEMP)
+        for (const ent of this.entities) {
+          if (ent.type === "WALL_TEMP") {
+            // AABB Check
+            if (
+              pRect.x < ent.x + ent.w &&
+              pRect.x + pRect.w > ent.x &&
+              pRect.y < ent.y + ent.h &&
+              pRect.y + pRect.h > ent.y
+            ) {
+              // Collision with Force Field
+              if (p.ownerId === ent.ownerId) {
+                // Pass through (Owner-only)
+              } else {
+                // Reflect Bullet
+                // Simple Box Bounce: Determine side
+                const dx = p.x - (ent.x + ent.w / 2);
+                const dy = p.y - (ent.y + ent.h / 2);
+                const width = (pRect.w + ent.w) / 2;
+                const height = (pRect.h + ent.h) / 2;
+                const crossWidth = width * dy;
+                const crossHeight = height * dx;
+
+                if (Math.abs(dx) <= width && Math.abs(dy) <= height) {
+                  if (crossWidth > crossHeight) {
+                    if (crossWidth > -crossHeight) {
+                      p.vy = Math.abs(p.vy); // Bottom hit -> Down
+                    } else {
+                      p.vx = -Math.abs(p.vx); // Left hit -> Left
+                    }
+                  } else {
+                    if (crossWidth > -crossHeight) {
+                      p.vx = Math.abs(p.vx); // Right hit -> Right
+                    } else {
+                      p.vy = -Math.abs(p.vy); // Top hit -> Up
+                    }
+                  }
+
+                  // Steal Bullet
+                  p.ownerId = ent.ownerId;
+                  p.color = "#00f3ff"; // Turn into Engineer Bullet Color
+
+                  // Buff Damage on Reflection (User Request)
+                  if (p.damage) p.damage *= 2;
+                  else p.damage = 30; // Default 15 * 2
+
+                  // Push out slightly
+                  p.x += p.vx * 0.05;
+                  p.y += p.vy * 0.05;
+                }
+              }
+            }
+          }
+        }
+
         // Collision check with players
         for (const [id, player] of this.players) {
           if (p.ownerId === id) continue; // Don't hit self
           if (player.isDead) continue; // Ghost Mode: Bullets pass through dead players
-
 
           // Simple Circle Collision
           const dx = p.x - player.x;
@@ -421,13 +540,24 @@ class GameServer {
               break; // Blocked
             }
             if (player.isInvincible) {
-                this.projectiles.splice(i, 1);
-                hitWall = true;
-                break; // Blocked by Fortress
+              this.projectiles.splice(i, 1);
+              hitWall = true;
+              break; // Blocked by Fortress
             }
 
             // Apply Damage
             let damage = p.damage || 15;
+
+            // MAGMA DAMAGE SCALING (Long Range Bonus)
+            if (p.type === "LAVA_WAVE" && p.maxLife) {
+              // Life starts at 1500.
+              // Ratio 1.0 = Just Fired (Close). Ratio 0.0 = Expires (Far).
+              const ratio = Math.max(0, p.life / p.maxLife);
+              // Inverse Ratio: 0.0 (Close) -> 1.0 (Far)
+              const distFactor = 1.0 - ratio;
+              // Bonus: Up to +50% Damage at MAX range
+              damage = damage * (1 + distFactor * 0.5);
+            }
 
             // FREEZE EFFECT
             if (p.effect === "FREEZE") {
@@ -442,28 +572,28 @@ class GameServer {
                 player.freezeEndTime = 0;
               }, 2000); // Freeze for 2 seconds
             }
-            
+
             // POISON EFFECT (VIPER)
             if (p.isPoison) {
-                damage += 25; 
-                player.speed = player.baseSpeed * 0.4; 
-                player.isPoisoned = true; // Flag for Client Visuals
-                
-                if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
-                
-                player.poisonTimeout = setTimeout(() => {
-                    player.speed = player.baseSpeed;
-                    player.isPoisoned = false; // Turn off visual
-                    player.poisonTimeout = null;
-                }, 3000);
+              damage += 25;
+              player.speed = player.baseSpeed * 0.4;
+              player.isPoisoned = true; // Flag for Client Visuals
 
-                // Initial Hit Effect
-                this.io.emit("visual_effect", {
-                    type: "poison_hit",
-                    targetId: player.id,
-                    x: player.x,
-                    y: player.y
-                });
+              if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
+
+              player.poisonTimeout = setTimeout(() => {
+                player.speed = player.baseSpeed;
+                player.isPoisoned = false; // Turn off visual
+                player.poisonTimeout = null;
+              }, 3000);
+
+              // Initial Hit Effect
+              this.io.emit("visual_effect", {
+                type: "poison_hit",
+                targetId: player.id,
+                x: player.x,
+                y: player.y,
+              });
             }
 
             player.hp -= damage;
@@ -477,17 +607,20 @@ class GameServer {
                 killer.hp = Math.min(killer.maxHp, killer.hp + 50);
                 this.awardCoins(killer.username, 50);
                 // NOTIFY KILLER
-                this.io.to(p.ownerId).emit("kill_confirmed", { victim: player.username || player.hero.name });
+                this.io.to(p.ownerId).emit("kill_confirmed", {
+                  victim: player.username || player.hero.name,
+                });
               }
               // TRIGGER DEATH
               const deathX = player.x;
               const deathY = player.y;
               player.hp = 0;
               player.isDead = true;
-              const kName = killer ? (killer.username || "Unknown") : "Unknown";
-              const hName = (killer && killer.hero) ? (killer.hero.name || killer.hero) : "?";
+              const kName = killer ? killer.username || "Unknown" : "Unknown";
+              const hName =
+                killer && killer.hero ? killer.hero.name || killer.hero : "?";
               player.killedBy = kName;
-              player.killedByHero = typeof hName === 'string' ? hName : "?";
+              player.killedByHero = typeof hName === "string" ? hName : "?";
               player.isFrozen = false; // Clear Frost
               player.freezeEndTime = 0;
               player.respawnTime = Date.now() + 5000; // 5 Seconds
@@ -495,9 +628,13 @@ class GameServer {
               const spawn = this.getSafeSpawn();
               player.x = spawn.x;
               player.y = spawn.y;
-              
+
               // Explosion Event
-              this.io.to("game_room").emit("player_died", { x: deathX, y: deathY, color: player.color });
+              this.io.to("game_room").emit("player_died", {
+                x: deathX,
+                y: deathY,
+                color: player.color,
+              });
             }
             break; // Projectile destroyed
           }
@@ -515,7 +652,6 @@ class GameServer {
           if (ent.ownerId === id) continue;
           if (player.isDead) continue; // Ghost Mode
 
-
           const dx = ent.x - player.x;
           const dy = ent.y - player.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
@@ -531,17 +667,20 @@ class GameServer {
               if (killer) {
                 this.awardCoins(killer.username, 50);
                 // NOTIFY KILLER (Mine)
-                this.io.to(ent.ownerId).emit("kill_confirmed", { victim: player.username || player.hero.name });
+                this.io.to(ent.ownerId).emit("kill_confirmed", {
+                  victim: player.username || player.hero.name,
+                });
               }
               // TRIGGER DEATH
               const deathX = player.x;
               const deathY = player.y;
               player.hp = 0;
               player.isDead = true;
-              const kName = killer ? (killer.username || "Unknown") : "Unknown";
-              const hName = (killer && killer.hero) ? (killer.hero.name || killer.hero) : "?";
+              const kName = killer ? killer.username || "Unknown" : "Unknown";
+              const hName =
+                killer && killer.hero ? killer.hero.name || killer.hero : "?";
               player.killedBy = kName;
-              player.killedByHero = typeof hName === 'string' ? hName : "?";
+              player.killedByHero = typeof hName === "string" ? hName : "?";
               player.isFrozen = false; // Clear Frost
               player.freezeEndTime = 0;
               player.respawnTime = Date.now() + 5000;
@@ -549,9 +688,13 @@ class GameServer {
               const spawn = this.getSafeSpawn();
               player.x = spawn.x;
               player.y = spawn.y;
-              
+
               // Explosion Event
-              this.io.to("game_room").emit("player_died", { x: deathX, y: deathY, color: player.color });
+              this.io.to("game_room").emit("player_died", {
+                x: deathX,
+                y: deathY,
+                color: player.color,
+              });
             }
             break;
           }
