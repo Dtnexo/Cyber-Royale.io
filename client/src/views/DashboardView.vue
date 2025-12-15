@@ -74,6 +74,10 @@ const retryConnection = async () => {
 
 <template>
   <div class="dashboard-page">
+    <!-- BACKGROUND LOGO WATERMARKS -->
+    <div class="bg-watermark right"></div>
+    <div class="bg-watermark left"></div>
+
     <header class="top-bar">
       <div class="user-info">
         <span class="neon-text">OPERATIVE: {{ auth.user?.username }}</span>
@@ -182,7 +186,45 @@ const retryConnection = async () => {
   height: 100%;
   background: radial-gradient(circle at center, transparent 0%, #000 90%);
   pointer-events: none;
+  pointer-events: none;
   z-index: 1;
+}
+
+.bg-watermark {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 80vh; /* Responsive large size */
+  height: 80vh;
+  background-image: url("/logo_icon-removebg.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.15; /* Subtle styling */
+  z-index: 0; /* Behind everything */
+  pointer-events: none;
+  filter: drop-shadow(0 0 50px rgba(0, 255, 255, 0.2));
+  animation: pulse-logo 10s ease-in-out infinite;
+}
+
+.bg-watermark.right {
+  left: 85%;
+}
+
+.bg-watermark.left {
+  left: 15%;
+}
+
+@keyframes pulse-logo {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.25;
+    transform: translate(-50%, -50%) scale(1.05);
+  }
 }
 
 .container {
@@ -233,6 +275,25 @@ const retryConnection = async () => {
   color: #fff;
   text-transform: uppercase;
   text-shadow: 2px 2px 0px var(--primary-dim);
+}
+
+.game-logo {
+  width: 180px;
+  height: auto;
+  margin-bottom: 2rem;
+  mix-blend-mode: screen; /* Removes black background */
+  filter: drop-shadow(0 0 20px rgba(0, 255, 255, 0.5));
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .main-panel {

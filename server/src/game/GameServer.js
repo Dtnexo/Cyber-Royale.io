@@ -413,22 +413,39 @@ class GameServer {
 
               if (dist < blastRadius) {
                 // SCALED DAMAGE (User Request: "loin moins degat, pres oneshot")
-                // Max Damage (Center): 145 (One Shot)
-                // Min Damage (Edge): 45
-                const maxDmg = 145;
-                const minDmg = 45;
-                const dmg = maxDmg - (dist / blastRadius) * (maxDmg - minDmg);
+
+                let dmg = 0;
+
+                // 1. ONE SHOT (Collé / Très proche) -> < 60 unités
+                if (dist < 80) {
+                  // Un peu plus généreux que 60 pour le "collé"
+                  dmg = 9999; // INSTANT KILL
+                } else {
+                  // 2. SCALED DAMAGE (Plus loin = Moins de dégats)
+                  // Distance range: [80, 400]
+                  // Damage range: [120, 30]
+
+                  const maxScaledDmg = 120;
+                  const minScaledDmg = 30;
+
+                  // Normalize distance from 0.0 (at 80) to 1.0 (at 400)
+                  const ratio = (dist - 80) / (blastRadius - 80);
+                  const clampedRatio = Math.max(0, Math.min(1, ratio));
+
+                  dmg =
+                    maxScaledDmg - clampedRatio * (maxScaledDmg - minScaledDmg);
+                }
 
                 target.hp -= Math.floor(dmg);
 
                 // Knockback (Extreme)
                 const angle = Math.atan2(dy, dx);
-                const force = 800 * (1 - dist / blastRadius) + 200; // Min 200 push
+                // Push force also scales: Close = HUGE PUSH, Far = Small Push
+                // Force Range: 1000 -> 200
+                const force = 1000 * (1 - dist / blastRadius) + 200;
 
                 // Push them
-                // Simple Position update (can be instant or velocity based)
-                // Let's do instant "blast" for simpler netcode
-                let pushX = target.x + Math.cos(angle) * 300;
+                let pushX = target.x + Math.cos(angle) * 300; // Distance pushed visually
                 let pushY = target.y + Math.sin(angle) * 300;
 
                 // Clamp to map
