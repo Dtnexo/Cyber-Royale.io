@@ -4,7 +4,7 @@ const bcrypt = require("bcrypt");
 async function seed() {
   try {
     // Safe Sync: Update existing tables without dropping data
-    await sequelize.sync({ alter: true });
+    await sequelize.sync(); // Removed alter: true to prevent "Too many keys" error
 
     // Ensure Heroes table is updated with new prices
     // We do NOT exit if heroes exist, allowing price updates to flow through.

@@ -58,6 +58,10 @@ onMounted(async () => {
   if (auth.token && !auth.user) {
     await auth.fetchProfile();
   }
+  // Ensure Heroes are loaded (Fix for "HERO: UNKNOWN" & Skin Color on refresh)
+  if (gameStore.allHeroes.length === 0 && auth.token) {
+    await gameStore.fetchHeroes();
+  }
 
   // Auto-detect URL for production (same origin), localhost for dev
   const socketUrl = import.meta.env.PROD
@@ -73,10 +77,12 @@ onMounted(async () => {
     const hero = gameStore.allHeroes.find((h) => h.id === heroId);
     const skinColor = hero?.skins[skinIdx]?.value || "#ffffff";
 
+    // console.log("Joining with token:", auth.token ? "PRESENT" : "MISSING");
     socket.value.emit("join_game", {
       heroId: heroId,
       username: auth.user?.username,
       skinColor: skinColor,
+      token: auth.token, // Send Token for verification
     });
   });
 

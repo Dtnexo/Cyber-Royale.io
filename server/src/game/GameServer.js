@@ -1,6 +1,8 @@
 const Player = require("./Player");
 const { Hero, User } = require("../models");
 const MapData = require("./MapData");
+const jwt = require("jsonwebtoken");
+
 
 class GameServer {
   constructor(io) {
@@ -14,17 +16,96 @@ class GameServer {
     this.io.on("connection", (socket) => {
       console.log("Player connected:", socket.id);
 
-      socket.on("join_game", async ({ heroId, username, skinColor }) => {
+      socket.on("join_game", async ({ heroId, username, skinColor, token }) => {
+        // SECURITY: Verify Token to prevent Username Spoofing via LocalStorage
+        if (token) {
+            try {
+                // DEBUG LOGGING
+                // console.log("Verifying token:", token.substring(0, 10) + "...");
+                const decoded = jwt.verify(token, process.env.JWT_SECRET || "default_secret_key");
+                
+                if (decoded && decoded.id) {
+                    // Token contains { id: ... } (See auth.js)
+                    // We must fetch the User to get the Username
+                    const dbUser = await User.findByPk(decoded.id);
+                    if (dbUser) {
+                        username = dbUser.username;
+                        console.log(`[AUTH] Verified user via Token ID: ${username}`);
+                    } else {
+                        console.warn("[AUTH] Token valid but user ID not found in DB");
+                        username = "Unknown";
+                    }
+                } else if (decoded && decoded.username) {
+                     // Fallback for legacy tokens if any
+                     username = decoded.username;
+                }
+            } catch (err) {
+                console.warn(`[AUTH] Invalid Token for ${socket.id}: ${err.message}`);
+                username = "Unknown"; // Force Guest
+            }
+
+        } else {
+             username = "Unknown"; // No Token = Guest
+        }
+
+        // SECURITY: Prevent Hero Switching while active
+        // SECURITY: Prevent Hero Switching while active
+        if (this.players.has(socket.id)) {
+            return;
+        }
+
         // Fetch hero stats from DB
         try {
-          const hero = await Hero.findByPk(heroId);
+          let hero = await Hero.findByPk(heroId);
+          
+          // SECURITY: Verify Ownership (Strict)
+          let isAllowed = false;
+          let user = null; // Declare in wider scope
+
+          if (hero && hero.price === 0) {
+              isAllowed = true; // Free heroes are always allowed
+          } else if (hero && username && username !== "Unknown") {
+             user = await User.findOne({ 
+                where: { username },
+                include: [{ model: Hero, as: "unlockedHeroes" }]
+             });
+             
+             if (user) {
+                // Check if user actually owns this paid hero
+                if (user.unlockedHeroes.some(h => h.id === hero.id)) {
+                    isAllowed = true;
+                }
+             }
+          }
+
+          if (hero && !isAllowed) {
+             console.warn(`[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`);
+             
+             // Fallback Logic: Try "Previous/Equipped" Hero
+             let fallbackHeroId = 1; // Default
+             if (user && user.equippedHeroId) {
+                  // Verify user owns their equipped hero too (sanity check)
+                  if (!user.unlockedHeroes) { // Re-check if needed, but we have it from include above
+                       // Should be loaded
+                  }
+                  // Check if equippedHeroId is valid owned hero
+                   if (user.unlockedHeroes.some(h => h.id === user.equippedHeroId)) {
+                        fallbackHeroId = user.equippedHeroId;
+                        console.log(`[SECURITY] Reverting to Last Equipped Valid Hero (ID: ${fallbackHeroId})`);
+                   }
+             }
+             
+             hero = await Hero.findByPk(fallbackHeroId); 
+             if (!hero) hero = await Hero.findOne({ where: { price: 0 } });
+          }
+
           if (hero) {
             // Check Reconnection
             let restored = false;
             if (username && username !== "Unknown") {
                const saved = this.disconnectedPlayers.get(username);
-               // Check if same Hero
-               if (saved && saved.player.hero.id == heroId) {
+               // Check if same Hero (Use verified hero.id)
+               if (saved && saved.player.hero.id == hero.id) {
                  // Restore State
                  clearTimeout(saved.timeout);
                  this.disconnectedPlayers.delete(username);
