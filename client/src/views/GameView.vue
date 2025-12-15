@@ -989,10 +989,13 @@ const drawPlayer = (ctx, p) => {
   if (p.invisible && p.id !== myId) return; // Don't show HUD for hidden enemies
 
   // 1. HP Bar
+  const maxHp = p.maxHp || 100;
+  const hpPercent = Math.max(0, Math.min(1, p.hp / maxHp));
+
   ctx.fillStyle = "#333";
   ctx.fillRect(screenX - 30, screenY - 55, 60, 6);
   ctx.fillStyle = "#00ff00";
-  ctx.fillRect(screenX - 30, screenY - 55, 60 * (p.hp / p.maxHp), 6);
+  ctx.fillRect(screenX - 30, screenY - 55, 60 * hpPercent, 6);
 
   // 3. Username Tag
   ctx.fillStyle = "#fff";
