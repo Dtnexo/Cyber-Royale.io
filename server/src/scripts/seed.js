@@ -247,7 +247,7 @@ async function seed() {
       {
         id: 22,
         name: "Kamikaze",
-        price: 0, // Free for testing? Or Paid? User didn't specify. I'll make it 0 for now or low price. Let's make it 0 so they can test it.
+        price: 1000, // User Request
         class: "Speed",
         skins: [
           { name: "Default", value: "#ff0000" }, // Bright Red
