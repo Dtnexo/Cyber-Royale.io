@@ -95,6 +95,16 @@ onMounted(async () => {
     spawnExplosion(data.x, data.y, data.color);
   });
 
+  socket.value.on("visual_effect", (data) => {
+    if (data.type === "shockwave") {
+        spawnExplosion(data.x, data.y, data.color || "#ffffff"); 
+        // Could be enhanced with a ring later, but explosion is good for now
+    } else if (data.type === "poison_hit") {
+        // Spawn green bubbles on victim
+        spawnExplosion(data.x, data.y, "#32cd32"); 
+    }
+  });
+
   socket.value.on("kill_confirmed", (data) => {
     const id = Date.now();
     killMessages.value.push({ id, text: `YOU ELIMINATED ${data.victim}` });
@@ -425,9 +435,14 @@ const drawProjectiles = (ctx) => {
     ctx.beginPath();
     ctx.arc(sx, sy, 5, 0, Math.PI * 2);
     ctx.fill();
+    
+    // VISIBILITY FIX: Outline for dark bullets
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
 
     // Glow
-    ctx.shadowColor = p.color || "#fff";
+    ctx.shadowColor = p.color === "#000000" ? "#ffffff" : (p.color || "#fff");
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.shadowBlur = 0;
@@ -492,6 +507,35 @@ const drawPlayer = (ctx, p) => {
 
   // Use Class to determine shape if specific hero not defined
   const heroClass = p.heroClass || "Damage";
+
+  // --- POISON AURA (VIPER EFFECT) ---
+  if (p.isPoisoned) {
+      ctx.save();
+      const time = Date.now() / 200;
+      ctx.strokeStyle = "#00FF00"; // Bright Green
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.8;
+      
+      // Bubbling Ring
+      ctx.beginPath();
+      // Radius pulses
+      const r = 35 + Math.sin(time) * 3;
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Inner Bubbles
+      ctx.fillStyle = "#32cd32";
+      for(let i=0; i<3; i++) {
+        const angle = (time + i * 2) % (Math.PI*2);
+        const br = 25;
+        const bx = Math.cos(angle) * br;
+        const by = Math.sin(angle) * br;
+        ctx.beginPath();
+        ctx.arc(bx, by, 4, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+  }
 
   // --- ACTIVE SKILL AURA (Energy Pulse) ---
   if (p.isSkillActive || p.shield) {
@@ -755,6 +799,21 @@ const loop = (ctx) => {
       ctx.strokeStyle = "#00f3ff";
       ctx.lineWidth = 2;
       ctx.strokeRect(sx, sy, ent.w, ent.h);
+    } else if (ent.type === "DECOY") {
+        // Draw Decoy (REALISTIC: Identical to real player)
+        ctx.save();
+        // ctx.globalAlpha = 1.0; // Default opacity for realism
+        // Reuse drawPlayer logic
+        const fakePlayer = {
+            ...ent,
+            angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
+            hero: ent.heroName,
+            heroClass: ent.heroClass,
+            shield: false,
+            dead: false
+        };
+        drawPlayer(ctx, fakePlayer);
+        ctx.restore();
     }
   });
 

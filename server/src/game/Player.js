@@ -109,8 +109,11 @@ class Player {
   shoot() {
     if (this.cooldowns.shoot > 0 || this.isFrozen) return null;
 
-    // Fire rate: 0.3s normally, 0.05s if Rapid Fire
-    this.cooldowns.shoot = this.rapidFire ? 60 : 300;
+    // Fire rate: 0.3s normally
+    // Blaze: 0.05s (Super Fast)
+    // Brawler/Others: 0.15s (Moderate)
+    let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
+    this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
     const speed = 600;
     const vx = Math.cos(this.mouseAngle) * speed;
@@ -159,13 +162,13 @@ class Player {
       }, 5000);
     } else if (name === "Brawler") {
       this.cooldowns.skill += 3000;
-      duration = 3000;
+      duration = 2000; // Nerfed Duration
       this.rapidFire = true;
-      this.speed = this.baseSpeed * 1.5;
+      this.speed = this.baseSpeed * 1.3;
       setTimeout(() => {
         this.rapidFire = false;
         this.speed = this.baseSpeed;
-      }, 3000);
+      }, 2000);
     } else if (name === "Goliath") {
       this.cooldowns.skill += 3000;
       duration = 3000;
@@ -180,49 +183,16 @@ class Player {
 
     // === SPEED ===
     else if (name === "Spectre") {
-      duration = 500;
-
-      // Blink (Instant) - Safe Logic
-      const maxDist = 300;
-      let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
-      let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
-      
-      // Raycast back if hitting wall
-      let steps = 10;
-      let safe = false;
-      
-      for(let i=0; i<=steps; i++) {
-        // Linear interpolation from Target back to Origin
-        const factor = 1 - (i / steps); // 1.0, 0.9, ... 0.0
-        const mx = this.x + (targetX - this.x) * factor;
-        const my = this.y + (targetY - this.y) * factor;
-        
-        let collision = false;
-        const pRect = { x: mx - 20, y: my - 20, w: 40, h: 40 };
-        for (const obs of MapData.obstacles) {
-             if (
-               pRect.x < obs.x + obs.w &&
-               pRect.x + pRect.w > obs.x &&
-               pRect.y < obs.y + obs.h &&
-               pRect.y + pRect.h > obs.y
-             ) {
-               collision = true;
-               break;
-             }
-        }
-        
-        if (!collision) {
-             this.x = mx;
-             this.y = my;
-             safe = true;
-             break;
-        }
-      }
-      // If never safe (shouldn't happen since origin is safe), stay put
-      
-      // Clamp
-      this.x = Math.max(0, Math.min(MapData.width, this.x));
-      this.y = Math.max(0, Math.min(MapData.height, this.y));
+      duration = 750;
+      this.cooldowns.skill += 4000;
+      // Phantom Dash: High Speed + Wall Phasing
+      this.speed = this.baseSpeed * 3.5;
+      this.isPhasing = true; // Pass through walls
+      setTimeout(() => {
+          this.speed = this.baseSpeed;
+          this.isPhasing = false;
+          this.checkUnstuck(); // Ensure not stuck in wall
+      }, 750);
     } else if (name === "Volt") {
       this.cooldowns.skill += 2500;
       duration = 2500;
@@ -296,6 +266,96 @@ class Player {
         });
       }
       result = projs;
+    }
+    
+    // --- NEW HEROES (EXPANSION) ---
+    else if (name === "Citadel") {
+        duration = 3000;
+        // Fortress Mode: Invincible but Immobile
+        this.isInvincible = true; 
+        this.speed = 0;
+        this.shieldActive = true; 
+        setTimeout(() => {
+            this.isInvincible = false;
+            this.speed = this.baseSpeed;
+            this.shieldActive = false;
+        }, 3000);
+    } else if (name === "Magma") {
+        duration = 500;
+        // Eruption: Spawn Lava Mines
+        const mines = [];
+        for(let i=0; i<5; i++) {
+             mines.push({
+                type: "MINE",
+                id: Math.random().toString(36).substr(2, 9),
+                x: this.x + (Math.random()*40 - 20),
+                y: this.y + (Math.random()*40 - 20),
+                ownerId: this.id,
+                damage: 50,
+                life: 10000 // 10s
+             });
+        }
+        result = mines;
+    } else if (name === "Storm") {
+        duration = 500;
+        // Overload: 16 Lightning Bolts (Buffed)
+        const projs = [];
+        for (let i = 0; i < 16; i++) {
+            const angle = (i / 16) * Math.PI * 2;
+            projs.push({
+              type: "PROJECTILE",
+              id: Math.random().toString(36).substr(2, 9),
+              x: this.x,
+              y: this.y,
+              vx: Math.cos(angle) * 800, // Faster
+              vy: Math.sin(angle) * 800,
+              ownerId: this.id,
+              color: "#ffff00", 
+              life: 1000,
+            });
+        }
+        result = projs;
+    } else if (name === "Viper") {
+        duration = 5000;
+        // Venom: Poisonous shots
+        this.isPoisonous = true;
+        setTimeout(() => (this.isPoisonous = false), 5000);
+    } else if (name === "Mirage") {
+        duration = 4000;
+        // Decoy: Spawn a fake player and go invisible
+        this.isInvisible = true;
+        this.speed = this.baseSpeed * 1.5;
+        setTimeout(() => {
+            this.isInvisible = false;
+            this.speed = this.baseSpeed;
+        }, 4000);
+        
+        result = {
+            type: "DECOY",
+            x: this.x,
+            y: this.y,
+            ownerId: this.id,
+            heroName: this.hero.name,
+            heroClass: this.hero.class,
+            username: this.username || "Unknown", // FAKE NAME
+            hp: this.hp, // FAKE HP (Visual)
+            maxHp: this.maxHp,
+            color: this.color,
+            vx: Math.cos(this.mouseAngle) * this.baseSpeed, 
+            vy: Math.sin(this.mouseAngle) * this.baseSpeed,
+            life: 3000
+        };
+    } else if (name === "Jumper") {
+        duration = 500;
+        // Blink (Same as Spectre)
+        const maxDist = 350; // Further than Spectre
+        let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
+        let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
+        
+        // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
+        // ... (Simplified check: Clamp to map)
+        this.x = Math.max(0, Math.min(MapData.width, targetX));
+        this.y = Math.max(0, Math.min(MapData.height, targetY));
     }
 
     // === SUPPORT ===

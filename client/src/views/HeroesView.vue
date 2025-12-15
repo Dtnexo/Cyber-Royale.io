@@ -81,6 +81,12 @@ const getHeroDesc = (hero) => {
     Sniper: "ABILITY: Railgun (High Dmg, Fast Shot)",
     Shadow: "ABILITY: Stealth (Invisible 5s)",
     Nova: "ABILITY: Nova Blast (Radial Attack)",
+    Citadel: "ABILITY: Fortress (Invincible + Immobile)",
+    Magma: "ABILITY: Eruption (Lava Mines)",
+    Storm: "ABILITY: Overload (Lightning Storm)",
+    Viper: "ABILITY: Venom (Poison Ammo + Slow)",
+    Mirage: "ABILITY: Decoy (Spawn Clone + Stealth)",
+    Jumper: "ABILITY: Blink (Teleport)",
   };
   return descs[hero.name] || "ABILITY: Standard Combat";
 };

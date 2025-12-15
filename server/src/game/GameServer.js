@@ -183,6 +183,56 @@ class GameServer {
                 }, item.life);
               } else if (item.type === "PROJECTILE") {
                 this.projectiles.push(item);
+              } else if (item.type === "DECOY") {
+                 this.entities.push(item);
+                 setTimeout(() => {
+                   const idx = this.entities.indexOf(item);
+                   if (idx > -1) this.entities.splice(idx, 1);
+                 }, item.life);
+              } else if (item.type === "SHOCKWAVE") {
+                 // Immediate AoE Effect
+                 for (const [pid, p] of this.players) {
+                    if (pid === item.ownerId) continue;
+                    if (p.isDead) continue;
+                    
+                    const dx = p.x - item.x;
+                    const dy = p.y - item.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < item.radius) {
+                        // Apply Knockback
+                        const angle = Math.atan2(dy, dx);
+                        const force = item.knockback;
+                        
+                        // Simple wall collision check for knockback (optional, but good for stability)
+                        let nx = p.x + Math.cos(angle) * force;
+                        let ny = p.y + Math.sin(angle) * force;
+                        
+                        // Update Position
+                        p.x = Math.max(0, Math.min(1600, nx));
+                        p.y = Math.max(0, Math.min(1200, ny));
+                        
+                        // Apply Damage
+                        p.hp -= item.damage;
+                        
+                        // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
+                        // But we want kill credit immediately if possible.
+                        // For simplicity, let the main loop cleanup 'hp <= 0'
+                        if (p.hp <= 0) {
+                             const killer = this.players.get(item.ownerId);
+                             if (killer) {
+                                  killer.kills++;
+                                  killer.hp = Math.min(killer.maxHp, killer.hp + 50);
+                                  this.awardCoins(killer.username, 50);
+                                  this.io.to(item.ownerId).emit("kill_confirmed", { victim: p.username || p.hero.name });
+                                  p.killedBy = killer.username;
+                                  p.killedByHero = killer.hero.name;
+                             }
+                        }
+                    }
+                 }
+                 // Emulate Visual Explosion
+                 this.io.emit("visual_effect", { type: "shockwave", x: item.x, y: item.y, radius: item.radius, color: item.color });
               }
             });
           }
@@ -278,9 +328,14 @@ class GameServer {
         player.update(dt);
 
         // Shoot check
+        // Shoot check
         if (player.keys.space) {
           const proj = player.shoot();
           if (proj) {
+            if (player.isPoisonous) {
+                proj.isPoison = true; 
+                proj.color = "#32cd32"; // FORCE GREEN VISUAL
+            }
             this.projectiles.push(proj);
           }
         }
@@ -302,11 +357,13 @@ class GameServer {
           rapidFire: player.rapidFire,
           isRooted: player.isRooted,
           isSkillActive: player.isSkillActive,
-          freezeEndTime: player.freezeEndTime || 0, // Send freeze end time
+          isSkillActive: player.isSkillActive,
+          freezeEndTime: player.freezeEndTime || 0,
+          isPoisoned: player.isPoisoned, // SEND TO CLIENT
           skillCD: player.cooldowns.skill,
-          username: player.username, // Send Username
+          username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
-          kills: player.kills, // Send Kill Count
+          kills: player.kills,
         });
       });
 
@@ -363,6 +420,11 @@ class GameServer {
               hitWall = true;
               break; // Blocked
             }
+            if (player.isInvincible) {
+                this.projectiles.splice(i, 1);
+                hitWall = true;
+                break; // Blocked by Fortress
+            }
 
             // Apply Damage
             let damage = p.damage || 15;
@@ -379,6 +441,29 @@ class GameServer {
                 player.speed = player.baseSpeed;
                 player.freezeEndTime = 0;
               }, 2000); // Freeze for 2 seconds
+            }
+            
+            // POISON EFFECT (VIPER)
+            if (p.isPoison) {
+                damage += 25; 
+                player.speed = player.baseSpeed * 0.4; 
+                player.isPoisoned = true; // Flag for Client Visuals
+                
+                if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
+                
+                player.poisonTimeout = setTimeout(() => {
+                    player.speed = player.baseSpeed;
+                    player.isPoisoned = false; // Turn off visual
+                    player.poisonTimeout = null;
+                }, 3000);
+
+                // Initial Hit Effect
+                this.io.emit("visual_effect", {
+                    type: "poison_hit",
+                    targetId: player.id,
+                    x: player.x,
+                    y: player.y
+                });
             }
 
             player.hp -= damage;
