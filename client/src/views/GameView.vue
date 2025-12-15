@@ -128,6 +128,15 @@ onMounted(async () => {
       createShockwave(data.x, data.y, "#bf00ff");
       addScreenShake(15, 20);
       triggerFlash(0.5);
+    } else if (data.type === "supernova_blast") {
+      // SUPERNOVA VISUALS
+      createShockwave(data.x, data.y, "#da70d6"); // Orchid
+      spawnExplosion(data.x, data.y, "#da70d6");
+      addScreenShake(20, 20); // Heavy Shake
+      triggerFlash(0.8); // Bright Flash
+    } else if (data.type === "supernova_cast") {
+      // Charge Up Effect (Sound / Small Flash)
+      // Maybe a small reverse shockwave?
     }
   });
 
@@ -406,49 +415,6 @@ const drawMap = (ctx) => {
   });
 };
 
-// === SHOCKWAVES ===
-let shockwaves = [];
-
-const createShockwave = (x, y, color) => {
-  shockwaves.push({
-    x,
-    y,
-    color,
-    radius: 10,
-    maxRadius: 300,
-    alpha: 1.0,
-    speed: 15,
-  });
-};
-
-const updateShockwaves = () => {
-  for (let i = shockwaves.length - 1; i >= 0; i--) {
-    const s = shockwaves[i];
-    s.radius += s.speed;
-    s.alpha -= 0.05; // Fade out
-    if (s.alpha <= 0) shockwaves.splice(i, 1);
-  }
-};
-
-const drawShockwaves = (ctx) => {
-  ctx.save();
-  shockwaves.forEach((s) => {
-    const sx = s.x - cameraX;
-    const sy = s.y - cameraY;
-    ctx.beginPath();
-    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
-    ctx.strokeStyle = s.color;
-    ctx.lineWidth = 5;
-    ctx.globalAlpha = s.alpha;
-    ctx.stroke();
-    // Inner fill for extra "pop"
-    ctx.fillStyle = s.color;
-    ctx.globalAlpha = s.alpha * 0.2;
-    ctx.fill();
-  });
-  ctx.restore();
-};
-
 // === PARTICLES ===
 let particles = [];
 
@@ -495,6 +461,46 @@ const spawnExplosion = (x, y, color) => {
 const spawnHitSparks = (x, y, color) => {
   for (let i = 0; i < 15; i++) {
     createParticle(x, y, color, 3 + Math.random() * 6, 15 + Math.random() * 10);
+  }
+};
+
+// === SHOCKWAVES ===
+let shockwaves = [];
+
+const createShockwave = (x, y, color) => {
+  shockwaves.push({
+    x,
+    y,
+    color,
+    radius: 10,
+    maxRadius: 400,
+    alpha: 1.0,
+    speed: 25, // Fast Expansion
+  });
+};
+
+const drawShockwaves = (ctx) => {
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.radius += s.speed;
+    s.alpha -= 0.04; // Fade out
+
+    if (s.alpha <= 0 || s.radius > s.maxRadius) {
+      shockwaves.splice(i, 1);
+      continue;
+    }
+
+    const sx = s.x - cameraX;
+    const sy = s.y - cameraY;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 15 * s.alpha; // Thick ring
+    ctx.globalAlpha = s.alpha;
+    ctx.stroke();
+    ctx.restore();
   }
 };
 
@@ -1064,7 +1070,6 @@ const loop = (ctx) => {
 
   // UPDATE & CLEAR
   updateParticles();
-  updateShockwaves();
 
   // Update Shake
   if (shakeDuration > 0) {
@@ -1096,96 +1101,7 @@ const loop = (ctx) => {
 
   // Draw Entities (Mines, Decoys, Black Holes) - BACKGROUND LAYER
   entities.forEach((ent) => {
-    // BLACK HOLE (Nova)
-    if (ent.type === "BLACK_HOLE") {
-      const sx = ent.x - cameraX;
-      const sy = ent.y - cameraY;
-      ctx.save();
-      ctx.translate(sx, sy);
-
-      // BLINKING LOGIC (Using synced life)
-      // Removed Opacity Blinking as per user request ("Animation Disappearing")
-      // Instead, maybe just pulse the ring color or speed up rotation?
-      // For now, keep it solid and stable.
-
-      const time = Date.now() / 1000;
-      const radius = 60;
-
-      // 1. PHOTON RING (Glowing White/Blue Halo)
-      ctx.shadowBlur = 30;
-      ctx.shadowColor = "#e0ffff";
-      ctx.beginPath();
-      ctx.arc(0, 0, 42, 0, Math.PI * 2);
-      ctx.strokeStyle = "#fff"; // Solid White
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.shadowBlur = 0; // Reset
-
-      // 2. EVENT HORIZON (Pitch Black)
-      ctx.beginPath();
-      ctx.globalAlpha = 1.0; // Always Solid
-      ctx.arc(0, 0, 40, 0, Math.PI * 2);
-      ctx.fillStyle = "#000";
-      ctx.fill();
-
-      // 3. INNER ACCRETION DISK (Fast, Bright Violet)
-      ctx.rotate(time * 2); // Fast Rotation
-      ctx.globalAlpha = 0.9;
-      ctx.lineWidth = 4;
-      for (let i = 0; i < 3; i++) {
-        ctx.beginPath();
-        // Inner radius 50
-        ctx.arc(
-          0,
-          0,
-          50,
-          i * ((Math.PI * 2) / 3),
-          i * ((Math.PI * 2) / 3) + 1.5
-        );
-        ctx.strokeStyle = "#da70d6"; // Orchid/Violet
-        ctx.stroke();
-      }
-
-      // 4. OUTER ACCRETION DISK (Slow, Darker Purple, Reverse Spin)
-      ctx.rotate(-time * 3); // Reverse rotation relative to inner (net effect)
-      ctx.globalAlpha = 0.6;
-      ctx.lineWidth = 6;
-      for (let i = 0; i < 4; i++) {
-        ctx.beginPath();
-        // Outer radius 70
-        ctx.arc(
-          0,
-          0,
-          70,
-          i * ((Math.PI * 2) / 4),
-          i * ((Math.PI * 2) / 4) + 1.0
-        );
-        ctx.strokeStyle = "#9400d3"; // Dark Violet
-        ctx.stroke();
-      }
-
-      // 5. SUCTION LINES (Cyan/White - Moving Inward)
-      // Reset rotation for particles
-      ctx.rotate(time); // Just to keep them moving
-      if (Math.random() > 0.3) {
-        // Draw random line pointing to center
-        const angle = Math.random() * Math.PI * 2;
-        const outerDist = 120;
-        const innerDist = 50;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(angle) * outerDist, Math.sin(angle) * outerDist);
-        ctx.lineTo(Math.cos(angle) * innerDist, Math.sin(angle) * innerDist);
-        ctx.strokeStyle =
-          Math.random() > 0.5
-            ? "rgba(0, 255, 255, 0.3)"
-            : "rgba(255, 0, 255, 0.3)";
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 1.0;
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    } else if (ent.type === "MINE") {
+    if (ent.type === "MINE") {
       const sx = ent.x - cameraX;
       const sy = ent.y - cameraY;
       ctx.beginPath();
@@ -1233,6 +1149,7 @@ const loop = (ctx) => {
 
   // Draw Particles (ON TOP)
   drawParticles(ctx);
+  drawShockwaves(ctx);
 
   ctx.restore(); // End Shake Translation
 
@@ -1306,9 +1223,23 @@ const loop = (ctx) => {
               height: Math.min((skillCD / maxSkillCD) * 100, 100) + '%',
             }"
           ></div>
-          <div class="cooldown-text active-text" v-if="skillCD > maxSkillCD">
+
+          <!-- BUSY / INFINITE -->
+          <div
+            class="cooldown-text"
+            v-if="skillCD >= 50000"
+            style="font-size: 2rem; margin-top: -5px"
+          >
+            ⌛
+          </div>
+          <!-- OVERLOAD / PENALTY -->
+          <div
+            class="cooldown-text active-text"
+            v-else-if="skillCD > maxSkillCD"
+          >
             {{ ((skillCD - maxSkillCD) / 1000).toFixed(1) }}s
           </div>
+          <!-- NORMAL COOLDOWN -->
           <div class="cooldown-text" v-else-if="skillCD > 0">
             {{ (skillCD / 1000).toFixed(1) }}
           </div>
@@ -1339,7 +1270,10 @@ const loop = (ctx) => {
           @touchstart.prevent="triggerSkill"
           @mousedown.prevent="triggerSkill"
         >
-          <span v-if="skillCD > 0">{{ (skillCD / 1000).toFixed(0) }}</span>
+          <span v-if="skillCD > 0 && skillCD < 50000">{{
+            (skillCD / 1000).toFixed(0)
+          }}</span>
+          <span v-else-if="skillCD >= 50000" style="font-size: 1.5rem">⌛</span>
           <span v-else style="font-size: 1.5rem">⚡</span>
         </button>
       </div>

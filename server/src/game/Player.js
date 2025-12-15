@@ -250,20 +250,21 @@ class Player {
       this.isInvisible = true;
       setTimeout(() => (this.isInvisible = false), 5000);
     } else if (name === "Nova") {
-      duration = 500;
-      // Black Hole Shot
-      // Fires a projectile that travels, stops, and becomes a Black Hole
+      // PROPOSAL: "Supernova"
+      // Charge for 0.5s, then massive radial explosion around player.
+
+      this.cooldowns.skill += 8000; // 8s Cooldown
+      duration = 500; // Charge time visual
+
+      // Mark state for GameServer to handle explosion
+      this.supernovaStartTime = Date.now();
+
+      // No projectile. The player IS the bomb.
       result = {
-        type: "BLACK_HOLE_SHOT",
-        id: Math.random().toString(36).substr(2, 9),
+        type: "SUPERNOVA_CHARGE",
+        ownerId: this.id,
         x: this.x,
         y: this.y,
-        vx: Math.cos(this.mouseAngle) * 600,
-        vy: Math.sin(this.mouseAngle) * 600,
-        ownerId: this.id,
-        life: 1000, // Travels for 1s
-        targetX: this.x + Math.cos(this.mouseAngle) * 600, // Optional help?
-        targetY: this.y + Math.sin(this.mouseAngle) * 600,
       };
     }
 
