@@ -253,7 +253,7 @@ class Player {
       // PROPOSAL: "Supernova"
       // Charge for 0.5s, then massive radial explosion around player.
 
-      this.cooldowns.skill += 8000; // 8s Cooldown
+      this.cooldowns.skill += 999999; // Yellow State (Busy)
       duration = 500; // Charge time visual
 
       // Mark state for GameServer to handle explosion

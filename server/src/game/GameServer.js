@@ -380,6 +380,10 @@ class GameServer {
             // BOOM!
             delete player.supernovaStartTime;
 
+            // RESET COOLDOWN (Red 8s)
+            // Removes the "Yellow Infinite" state immediately
+            player.cooldowns.skill = 8000;
+
             // Visual
             this.io.to("game_room").emit("visual_effect", {
               type: "supernova_cast", // Just a flash/sound trigger
@@ -408,8 +412,14 @@ class GameServer {
               const dist = Math.sqrt(dx * dx + dy * dy);
 
               if (dist < blastRadius) {
-                // Damage (Buffed: 95 -> 120)
-                target.hp -= 120;
+                // SCALED DAMAGE (User Request: "loin moins degat, pres oneshot")
+                // Max Damage (Center): 145 (One Shot)
+                // Min Damage (Edge): 45
+                const maxDmg = 145;
+                const minDmg = 45;
+                const dmg = maxDmg - (dist / blastRadius) * (maxDmg - minDmg);
+
+                target.hp -= Math.floor(dmg);
 
                 // Knockback (Extreme)
                 const angle = Math.atan2(dy, dx);
