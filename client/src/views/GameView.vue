@@ -97,6 +97,8 @@ onMounted(async () => {
   socket.value.on("visual_effect", (data) => {
     if (data.type === "shockwave") {
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
+      createShockwaveVisual(data.x, data.y, data.color || "#ffffff"); // Add Ring
+
       // Could be enhanced with a ring later, but explosion is good for now
     } else if (data.type === "poison_hit") {
       // Spawn green bubbles on victim
@@ -379,8 +381,21 @@ const drawMap = (ctx) => {
   });
 };
 
-// === PARTICLES ===
+// === PARTICLES & SHOCKWAVES ===
 let particles = [];
+let shockwaves = [];
+
+const createShockwaveVisual = (x, y, color) => {
+  shockwaves.push({
+    x,
+    y,
+    color,
+    radius: 10,
+    maxRadius: 100,
+    alpha: 1.0,
+    width: 10
+  });
+};
 
 const createParticle = (x, y, color, speed, life) => {
   const angle = Math.random() * Math.PI * 2;
@@ -408,6 +423,7 @@ const spawnExplosion = (x, y, color) => {
 };
 
 const updateParticles = () => {
+  // Particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx;
@@ -415,6 +431,32 @@ const updateParticles = () => {
     p.life--;
     if (p.life <= 0) particles.splice(i, 1);
   }
+  
+  // Shockwaves
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+      const sw = shockwaves[i];
+      sw.radius += 5; // Expand speed
+      sw.width *= 0.95; // Thin out
+      sw.alpha -= 0.05; // Fade out
+      
+      if (sw.alpha <= 0) shockwaves.splice(i, 1);
+  }
+};
+
+const drawShockwaves = (ctx) => {
+    shockwaves.forEach(sw => {
+        const sx = sw.x - cameraX;
+        const sy = sw.y - cameraY;
+        
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sx, sy, sw.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = sw.color;
+        ctx.lineWidth = sw.width;
+        ctx.globalAlpha = sw.alpha;
+        ctx.stroke();
+        ctx.restore();
+    });
 };
 
 const drawParticles = (ctx) => {
@@ -890,6 +932,7 @@ const loop = (ctx) => {
   // Draw World
   drawMap(ctx);
 
+  drawShockwaves(ctx); // <--- Draw Shockwaves
   // Draw Particles
   drawParticles(ctx);
 
@@ -899,7 +942,30 @@ const loop = (ctx) => {
   // Draw Entities (Mines)
   entities.forEach((ent) => {
     // This array contains only mines now
-    if (ent.type === "MINE") {
+    if (ent.type === "STICKY_GRENADE") {
+      const sx = ent.x - cameraX;
+      const sy = ent.y - cameraY;
+      
+      ctx.save();
+      ctx.translate(sx, sy);
+      // Pulsing black bomb (Bigger: Scale 1.5x of previous 10 -> 15-20)
+      const pulse = 1 + Math.sin(Date.now() / 50) * 0.3; // Fast frantic pulse
+      ctx.scale(pulse, pulse);
+      
+      ctx.fillStyle = "#ff0000";
+      ctx.beginPath();
+      // Size: 16 (Bigger than before)
+      ctx.arc(0, 0, 16, 0, Math.PI * 2); 
+      ctx.fill();
+      
+      // Fuse / Danger Center
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.arc(4, -4, 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    } else if (ent.type === "MINE") {
       const sx = ent.x - cameraX;
       const sy = ent.y - cameraY;
       ctx.beginPath();
