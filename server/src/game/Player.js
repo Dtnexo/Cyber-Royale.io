@@ -115,11 +115,34 @@ class Player {
     let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
     this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
+    const spawnX = this.x + Math.cos(this.mouseAngle) * 30;
+    const spawnY = this.y + Math.sin(this.mouseAngle) * 30;
+
+    // KAMIKAZE: Sticky Grenade Attack
+    if (this.hero.name === "Kamikaze") {
+      // Sticky Grenade
+      // Stats Tuned: Slower (400), Lower Damage (75), Bigger (radius handled in server/client)
+      const speed = 400;
+      return {
+        type: "STICKY_GRENADE",
+        id: Math.random().toString(36).substr(2, 9),
+        x: spawnX,
+        y: spawnY,
+        vx: Math.cos(this.mouseAngle) * speed,
+        vy: Math.sin(this.mouseAngle) * speed,
+        ownerId: this.id,
+        life: 2000,
+        damage: 50, // Reduced from 75 (User Feedback)
+        attachedTo: null,
+        radius: 100, // Explosion Radius
+        hitbox: 20, // Collision Hitbox
+        color: "#ff0000", // Red (User Request)
+      };
+    }
+
     const speed = 600;
     const vx = Math.cos(this.mouseAngle) * speed;
     const vy = Math.sin(this.mouseAngle) * speed;
-    const spawnX = this.x + Math.cos(this.mouseAngle) * 30;
-    const spawnY = this.y + Math.sin(this.mouseAngle) * 30;
 
     return {
       id: Math.random().toString(36).substr(2, 9),
@@ -361,6 +384,10 @@ class Player {
       // ... (Simplified check: Clamp to map)
       this.x = Math.max(0, Math.min(MapData.width, targetX));
       this.y = Math.max(0, Math.min(MapData.height, targetY));
+    } else if (name === "Kamikaze") {
+      // Suicide Skill
+      // result = { type: "SUICIDE" }; // Handled by GameServer
+      return { type: "SUICIDE" };
     }
 
     // === SUPPORT ===

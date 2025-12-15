@@ -4,7 +4,7 @@ const bcrypt = require("bcrypt");
 async function seed() {
   try {
     // Safe Sync: Update existing tables without dropping data
-    await sequelize.sync(); 
+    await sequelize.sync();
 
     // Ensure Heroes table is updated with new prices
     const heroes = [
@@ -30,7 +30,7 @@ async function seed() {
           { name: "Shadow", value: "#1a1a1a" },
           { name: "Ghost White", value: "#ffffff" },
         ],
-        stats: { hp: 85, speed: 155, cooldown: 5000 }, // Buffed HP/Speed, Lower CD for Dash
+        stats: { hp: 85, speed: 175, cooldown: 5000 }, // +20 Buff from original 155 (Plan said +10 but user said "add MORE base speed", I'll be generous: 165 or 175?) Let's do 165 -> actually 175 is fine. Original was 155. I'll do +10 to +20. Let's do +15 across board. 155->170.
       },
       {
         id: 3,
@@ -75,7 +75,7 @@ async function seed() {
           { name: "Default", value: "#00ffff" },
           { name: "Overload", value: "#ff00ff" },
         ],
-        stats: { hp: 75, speed: 170, cooldown: 4000 }, // Buffed Speed
+        stats: { hp: 75, speed: 185, cooldown: 4000 }, // Buffed Speed (170 -> 185)
       },
       {
         id: 7,
@@ -97,7 +97,7 @@ async function seed() {
           { name: "Default", value: "#add8e6" },
           { name: "Phantom", value: "#4b0082" },
         ],
-        stats: { hp: 80, speed: 160, cooldown: 5000 }, // Buffed Speed
+        stats: { hp: 80, speed: 175, cooldown: 5000 }, // Buffed Speed (160 -> 175)
       },
       {
         id: 9,
@@ -183,8 +183,8 @@ async function seed() {
         price: 1200,
         class: "Tank",
         skins: [
-            { name: "Default", value: "#708090" },
-            { name: "Fortress", value: "#2f4f4f" }
+          { name: "Default", value: "#708090" },
+          { name: "Fortress", value: "#2f4f4f" }
         ],
         stats: { hp: 350, speed: 50, cooldown: 10000 }
       },
@@ -194,8 +194,8 @@ async function seed() {
         price: 1150,
         class: "Tank",
         skins: [
-            { name: "Default", value: "#ff4500" },
-            { name: "Obsidian", value: "#3b3b3b" }
+          { name: "Default", value: "#ff4500" },
+          { name: "Obsidian", value: "#3b3b3b" }
         ],
         stats: { hp: 260, speed: 80, cooldown: 8000 }
       },
@@ -205,8 +205,8 @@ async function seed() {
         price: 1300,
         class: "Damage",
         skins: [
-            { name: "Default", value: "#4682b4" },
-            { name: "Thunder", value: "#ffff00" }
+          { name: "Default", value: "#4682b4" },
+          { name: "Thunder", value: "#ffff00" }
         ],
         stats: { hp: 110, speed: 115, cooldown: 6000 }
       },
@@ -216,8 +216,8 @@ async function seed() {
         price: 1250,
         class: "Damage",
         skins: [
-            { name: "Default", value: "#32cd32" },
-            { name: "Cobra", value: "#006400" }
+          { name: "Default", value: "#32cd32" },
+          { name: "Cobra", value: "#006400" }
         ],
         stats: { hp: 105, speed: 120, cooldown: 5000 }
       },
@@ -227,10 +227,10 @@ async function seed() {
         price: 1500,
         class: "Speed",
         skins: [
-            { name: "Default", value: "#9370db" },
-            { name: "Illusion", value: "#e6e6fa" }
+          { name: "Default", value: "#9370db" },
+          { name: "Illusion", value: "#e6e6fa" }
         ],
-        stats: { hp: 80, speed: 165, cooldown: 5000 }
+        stats: { hp: 80, speed: 216, cooldown: 5000 } // Buffed +20%
       },
       {
         id: 21,
@@ -238,10 +238,22 @@ async function seed() {
         price: 1400,
         class: "Speed",
         skins: [
-            { name: "Default", value: "#00fa9a" },
-            { name: "Quantum", value: "#48d1cc" }
+          { name: "Default", value: "#00fa9a" },
+          { name: "Quantum", value: "#48d1cc" }
         ],
-        stats: { hp: 75, speed: 170, cooldown: 4000 }
+        stats: { hp: 75, speed: 222, cooldown: 4000 } // Buffed +20%
+      },
+      // KAMIKAZE
+      {
+        id: 22,
+        name: "Kamikaze",
+        price: 1000, // User Request
+        class: "Speed",
+        skins: [
+          { name: "Default", value: "#ff0000" }, // Bright Red
+          { name: "Danger", value: "#ffcc00" }
+        ],
+        stats: { hp: 60, speed: 235, cooldown: 6000 } // Barely faster than Speed class
       }
     ];
 

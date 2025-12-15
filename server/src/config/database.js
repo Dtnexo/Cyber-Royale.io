@@ -27,11 +27,11 @@ if (process.env.MYSQL_URL) {
     process.env.DB_HOST || "(not set, defaulting to localhost)"
   );
   sequelize = new Sequelize(
-    process.env.DB_NAME,
-    process.env.DB_USER,
-    process.env.DB_PASS,
+    process.env.DB_NAME || "neon_arena_db",
+    process.env.DB_USER || "root",
+    process.env.DB_PASS || "rootpassword",
     {
-      host: process.env.DB_HOST,
+      host: process.env.DB_HOST || "localhost",
       dialect: "mysql",
       logging: false,
     }

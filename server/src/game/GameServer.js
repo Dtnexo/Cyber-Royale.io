@@ -10,6 +10,7 @@ class GameServer {
     this.projectiles = [];
     this.projectiles = [];
     this.entities = []; // Mines, etc.
+    this.map = MapData; // Initialize Map
     this.disconnectedPlayers = new Map(); // Store { username, player, timeout }
 
     this.io.on("connection", (socket) => {
@@ -199,6 +200,12 @@ class GameServer {
         if (player) {
           const result = player.useSkill();
           if (result) {
+            // KAMIKAZE SUICIDE
+            if (result.type === "SUICIDE") {
+              this.handleDeath(player, null);
+              return;
+            }
+
             const items = Array.isArray(result) ? result : [result];
             items.forEach((item) => {
               if (item.type === "MINE") {
@@ -316,6 +323,93 @@ class GameServer {
     this.startGameLoop();
   }
 
+  handleDeath(player, killer) {
+    if (player.isDead) return;
+
+    player.hp = 0;
+    player.isDead = true;
+
+    // Notify Killer
+    if (killer) {
+      killer.kills++;
+      killer.hp = Math.min(killer.maxHp, killer.hp + 50);
+      this.awardCoins(killer.username, 50);
+      this.io.to(killer.id).emit("kill_confirmed", {
+        victim: player.username || player.hero.name,
+      });
+      player.killedBy = killer.username || "Unknown";
+      player.killedByHero = killer.hero.name || "Unknown";
+    } else {
+      player.killedBy = "Yourself";
+      player.killedByHero = "?";
+    }
+
+    player.isFrozen = false;
+    player.freezeEndTime = 0;
+
+    // Kamikaze Respawn Timer: 5s (Default)
+    player.respawnTime = Date.now() + 5000;
+
+    // Death Event
+    this.io.to("game_room").emit("player_died", {
+      x: player.x,
+      y: player.y,
+      color: player.color,
+    });
+
+    // KAMIKAZE DEATH EXPLOSION
+    if (player.hero.name === "Kamikaze") {
+      this.createShockwave(player.id, player.x, player.y, 200, 200, "#ff0000"); // 200 Dmg, 200 Radius
+    }
+
+    // Teleport to safe zone
+    const spawn = this.getSafeSpawn();
+    player.x = spawn.x;
+    player.y = spawn.y;
+  }
+
+  createShockwave(ownerId, x, y, damage, radius, color, knockback = true, selfDamage = false) {
+    // Immediate AoE Effect (Reusing shockwave logic)
+    // We can also just push a SHOCKWAVE entity if we want it to be processed next frame, 
+    // but immediate is better for death events.
+
+    this.io.emit("visual_effect", {
+      type: "shockwave",
+      x: x,
+      y: y,
+      radius: radius,
+      color: color,
+    });
+
+    for (const [pid, p] of this.players) {
+      if (pid === ownerId && !selfDamage) continue;
+      if (p.isDead) continue;
+
+      const dx = p.x - x;
+      const dy = p.y - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < radius) {
+        // Apply Damage
+        p.hp -= damage;
+
+        // Knockback (Conditioned)
+        if (knockback) {
+          const angle = Math.atan2(dy, dx);
+          const force = 200;
+          p.x += Math.cos(angle) * force;
+          p.y += Math.sin(angle) * force;
+        }
+
+        if (p.hp <= 0) {
+          // Chain reaction? Check if killer exists for credit
+          const killer = this.players.get(ownerId); // Might be dead Kamikaze
+          this.handleDeath(p, killer);
+        }
+      }
+    }
+  }
+
   startGameLoop() {
     setInterval(() => {
       const dt = 0.03; // 30ms
@@ -378,11 +472,15 @@ class GameServer {
         if (player.keys.space) {
           const proj = player.shoot();
           if (proj) {
-            if (player.isPoisonous) {
-              proj.isPoison = true;
-              proj.color = "#32cd32"; // FORCE GREEN VISUAL
+            if (proj.type === "STICKY_GRENADE") {
+              this.entities.push(proj);
+            } else {
+              if (player.isPoisonous) {
+                proj.isPoison = true;
+                proj.color = "#32cd32"; // FORCE GREEN VISUAL
+              }
+              this.projectiles.push(proj);
             }
-            this.projectiles.push(proj);
           }
         }
 
@@ -412,6 +510,8 @@ class GameServer {
           kills: player.kills,
         });
       });
+
+
 
       // --- UPDATE ENTITIES (Mines, Decoys, Black Holes) ---
       // Handle Black Hole Gravity
@@ -565,6 +665,7 @@ class GameServer {
           let hitSomething = false;
           // 1. Walls
           const pRect = { x: p.x - 10, y: p.y - 10, w: 20, h: 20 };
+          for (const obs of this.map.obstacles) {
           for (const obs of MapData.obstacles) {
             if (
               pRect.x < obs.x + obs.w &&
@@ -592,6 +693,8 @@ class GameServer {
 
           // Transform on Death OR Collision
           if (p.life <= 0 || hitSomething) {
+            // IMPACT DAMAGE
+            if (hitSomething) {
             // IMPACT DAMAGE (Fix "No Damage" Bug)
             // If we hit a player, deal initial impact damage
             if (hitSomething) {
@@ -602,6 +705,10 @@ class GameServer {
                 const dx = p.x - player.x;
                 const dy = p.y - player.y;
                 if (Math.sqrt(dx * dx + dy * dy) < 30) {
+                  player.hp -= 20;
+                  this.io.emit("visual_effect", {
+                    type: "hit",
+                    targetId: pid,
                   player.hp -= 20; // Impact Damage
                   // Visual Hit
                   this.io.emit("visual_effect", {
@@ -611,6 +718,11 @@ class GameServer {
                     y: player.y,
                     color: "#d000ff",
                   });
+                  if (player.hp <= 0 && !player.isDead) {
+                    const killer = this.players.get(p.ownerId);
+                    if (killer) killer.kills++;
+                    player.killedBy = killer ? killer.username : "BlackHole";
+                    this.handleDeath(player, killer);
                   // Kill Check
                   if (player.hp <= 0 && !player.isDead) {
                     const killer = this.players.get(p.ownerId);
@@ -634,6 +746,11 @@ class GameServer {
               y: p.y,
               ownerId: p.ownerId,
               life: 5000,
+            };
+            this.entities.push(blackHole);
+            continue;
+          }
+          continue;
               // creationTime removed, using life
             };
             this.entities.push(blackHole);
@@ -857,48 +974,203 @@ class GameServer {
             // Handle Death
             if (player.hp <= 0) {
               const killer = this.players.get(p.ownerId);
-              if (killer) {
-                killer.kills++;
-                killer.hp = Math.min(killer.maxHp, killer.hp + 50);
-                this.awardCoins(killer.username, 50);
-                // NOTIFY KILLER
-                this.io.to(p.ownerId).emit("kill_confirmed", {
-                  victim: player.username || player.hero.name,
-                });
-              }
-              // TRIGGER DEATH
-              const deathX = player.x;
-              const deathY = player.y;
-              player.hp = 0;
-              player.isDead = true;
-              const kName = killer ? killer.username || "Unknown" : "Unknown";
-              const hName =
-                killer && killer.hero ? killer.hero.name || killer.hero : "?";
-              player.killedBy = kName;
-              player.killedByHero = typeof hName === "string" ? hName : "?";
-              player.isFrozen = false; // Clear Frost
-              player.freezeEndTime = 0;
-              player.respawnTime = Date.now() + 5000; // 5 Seconds
-              // Teleport to safe zone immediately (Invisible)
-              const spawn = this.getSafeSpawn();
-              player.x = spawn.x;
-              player.y = spawn.y;
-
-              // Explosion Event
-              this.io.to("game_room").emit("player_died", {
-                x: deathX,
-                y: deathY,
-                color: player.color,
-              });
+              this.handleDeath(player, killer);
             }
             break; // Projectile destroyed
           }
         }
       }
 
-      // 3. Update Entities (Mines)
       for (let i = this.entities.length - 1; i >= 0; i--) {
         const ent = this.entities[i];
+
+        if (ent.type === "BLACK_HOLE") {
+          ent.life -= dt * 1000;
+
+          // EXPLOSION CHECK
+          if (ent.life <= 0) {
+            const hx = ent.x;
+            const hy = ent.y;
+            this.entities.splice(i, 1); // Remove
+
+            this.io.to("game_room").emit("visual_effect", {
+              type: "black_hole_explode",
+              x: hx,
+              y: hy,
+            });
+
+            // Knockback Players
+            for (const [pid, player] of this.players) {
+              if (player.isDead) continue;
+              const dx = player.x - hx;
+              const dy = player.y - hy;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              if (dist < 300) {
+                const angle = Math.atan2(dy, dx);
+                // Fixed Wall Collision Knockback
+                const knockbackDist = 120;
+                let destX = player.x + Math.cos(angle) * knockbackDist;
+                let destY = player.y + Math.sin(angle) * knockbackDist;
+
+                let hitWall = false;
+                const testRect = { x: destX - 20, y: destY - 20, w: 40, h: 40 };
+                for (const obs of this.map.obstacles) {
+                  if (
+                    testRect.x < obs.x + obs.w &&
+                    testRect.x + testRect.w > obs.x &&
+                    testRect.y < obs.y + obs.h &&
+                    testRect.y + testRect.h > obs.y
+                  ) {
+                    hitWall = true;
+                    break;
+                  }
+                }
+
+                if (hitWall) {
+                  destX = player.x + Math.cos(angle) * (knockbackDist * 0.2);
+                  destY = player.y + Math.sin(angle) * (knockbackDist * 0.2);
+                }
+
+                destX = Math.max(20, Math.min(1600 - 20, destX));
+                destY = Math.max(20, Math.min(1200 - 20, destY));
+
+                player.x = destX;
+                player.y = destY;
+                player.hp -= 40;
+
+                if (player.hp <= 0 && !player.isDead) {
+                  const killer = this.players.get(ent.ownerId);
+                  if (killer) killer.kills++;
+                  player.killedBy = killer ? killer.username : "BlackHole";
+                  this.handleDeath(player, killer);
+                }
+              }
+            }
+            continue;
+          }
+
+          // Gravity Pull
+          const radius = 250;
+          const pullStrength = 300;
+
+          for (const [pid, p] of this.players) {
+            if (pid === ent.ownerId) continue;
+            if (p.isDead) continue;
+
+            const dx = ent.x - p.x;
+            const dy = ent.y - p.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < radius) {
+              if (dist < 1) dist = 1;
+              const nx = dx / dist;
+              const ny = dy / dist;
+              let strength = (1 - dist / radius) * pullStrength * (1 / 60);
+              if (strength > dist) strength = dist;
+
+              p.x += nx * strength;
+              p.y += ny * strength;
+
+              // Damage DOT
+              if (Math.random() < 0.2) {
+                p.hp -= 10;
+                if (p.hp <= 0 && !p.isDead) {
+                  const killer = this.players.get(ent.ownerId);
+                  if (killer) killer.kills++;
+                  p.killedBy = killer ? killer.username : "BlackHole";
+                  this.handleDeath(p, killer);
+                }
+              }
+            }
+          }
+        }
+
+        // STICKY GRENADE LOGIC
+        if (ent.type === "STICKY_GRENADE") {
+          ent.life -= dt * 1000;
+
+          // If attached, follow target
+          if (ent.attachedTo) {
+            const target = this.players.get(ent.attachedTo);
+
+            // If target invalid or dead, drop? or stay?
+            if (!target || target.isDead) {
+              ent.attachedTo = null; // Drop
+            } else {
+              ent.x = target.x;
+              ent.y = target.y;
+            }
+          } else {
+            // Physics (Fly)
+            ent.x += ent.vx * dt;
+            ent.y += ent.vy * dt;
+
+            // Wall Collision Check (Stop if hit wall)
+            // Reuse projectile wall check logic simplified
+            let hitWall = false;
+            // Map Boundaries
+            if (ent.x < 0 || ent.x > 1600 || ent.y < 0 || ent.y > 1200) hitWall = true;
+
+            // Obstacles
+            if (!hitWall) {
+              for (const obs of this.map.obstacles) {
+                if (
+                  ent.x > obs.x &&
+                  ent.x < obs.x + obs.w &&
+                  ent.y > obs.y &&
+                  ent.y < obs.y + obs.h
+                ) {
+                  hitWall = true;
+                  break;
+                }
+              }
+            }
+
+            if (hitWall) {
+              // Stop sticky grenade on wall
+              ent.vx = 0;
+              ent.vy = 0;
+              // Optional: Stick to wall? 
+              // Currently it just falls/stops. That's fine.
+            }
+          }
+
+          // Explode
+          if (ent.life <= 0) {
+            // Self Damage = TRUE, Knockback = FALSE
+            this.createShockwave(ent.ownerId, ent.x, ent.y, ent.damage, ent.radius, ent.color, false, true);
+            this.entities.splice(i, 1);
+            continue;
+          }
+
+          // Sticky Collision (Only if not attached)
+          if (!ent.attachedTo) {
+            for (const [id, player] of this.players) {
+              if (id === ent.ownerId) continue; // Don't stick to self initially?
+              if (player.isDead) continue;
+
+              const dx = ent.x - player.x;
+              const dy = ent.y - player.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              if (dist < 30) {
+                ent.attachedTo = id;
+                // Stick!
+                this.io.emit("visual_effect", {
+                  type: "text",
+                  text: "STUCK!",
+                  x: player.x,
+                  y: player.y - 40,
+                  color: "#ff0000"
+                });
+                break;
+              }
+            }
+          }
+          continue; // Skip normal mine logic
+        }
+
 
         // Simple collision with any player (even owner? maybe delay arming? for MVP instant arm)
         for (const [id, player] of this.players) {
@@ -919,38 +1191,9 @@ class GameServer {
 
             if (player.hp <= 0) {
               const killer = this.players.get(ent.ownerId);
-              if (killer) {
-                this.awardCoins(killer.username, 50);
-                // NOTIFY KILLER (Mine)
-                this.io.to(ent.ownerId).emit("kill_confirmed", {
-                  victim: player.username || player.hero.name,
-                });
-              }
-              // TRIGGER DEATH
-              const deathX = player.x;
-              const deathY = player.y;
-              player.hp = 0;
-              player.isDead = true;
-              const kName = killer ? killer.username || "Unknown" : "Unknown";
-              const hName =
-                killer && killer.hero ? killer.hero.name || killer.hero : "?";
-              player.killedBy = kName;
-              player.killedByHero = typeof hName === "string" ? hName : "?";
-              player.isFrozen = false; // Clear Frost
-              player.freezeEndTime = 0;
-              player.respawnTime = Date.now() + 5000;
-              // Teleport to safe zone immediately (Invisible)
-              const spawn = this.getSafeSpawn();
-              player.x = spawn.x;
-              player.y = spawn.y;
-
-              // Explosion Event
-              this.io.to("game_room").emit("player_died", {
-                x: deathX,
-                y: deathY,
-                color: player.color,
-              });
+              this.handleDeath(player, killer);
             }
+            break;
             break;
           }
         }
