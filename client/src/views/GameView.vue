@@ -1,16 +1,20 @@
 <script setup>
 import { onMounted, onUnmounted, ref, nextTick } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { io } from "socket.io-client";
 import nipplejs from "nipplejs";
 import { useGameStore } from "../stores/game";
 import { useAuthStore } from "../stores/auth";
 
 const router = useRouter();
+const route = useRoute();
 const gameStore = useGameStore();
 const auth = useAuthStore();
 
 const canvasRef = ref(null);
+const bushCanvas = document.createElement("canvas"); // Offscreen
+const bushCtx = bushCanvas.getContext("2d");
+
 const socket = ref(null);
 const isMobile = ref(false);
 
@@ -19,21 +23,43 @@ let joyManager = null;
 
 const skillCD = ref(0);
 const maxSkillCD = ref(1);
+
+// Game State
+let players = [];
+let projectiles = [];
+let entities = []; // Mines
+const playerVisuals = ref({}); // { [playerId]: { flashTime: 0 } }
+let mapData = null;
 const isDead = ref(false);
 const killedBy = ref("");
 const killedByHero = ref("");
 const respawnTimer = ref(0);
 const killMessages = ref([]); // { id, text }
 
-// Game State
-let players = [];
-let projectiles = [];
-let entities = []; // Mines
-let mapData = null;
 let animationId;
 let cameraX = 0;
 let cameraY = 0;
 let myId = null;
+
+// BR STATE
+const inQueue = ref(true);
+const queueCount = ref(0);
+const queueMax = ref(14);
+const customStatus = ref("");
+const aliveCount = ref(0);
+const powerCores = ref(0); // My gems
+const queueTimerVal = ref(0);
+const countdownVal = ref(0);
+const showCountdown = ref(false);
+const spectatingId = ref(null);
+const myRank = ref(0);
+const earnedCoins = ref(0);
+const winnerName = ref("");
+const isWinner = ref(false);
+
+let brZone = null;
+let crates = [];
+let items = []; // Gems
 
 // VFX State
 let shakeIntensity = 0;
@@ -85,25 +111,194 @@ onMounted(async () => {
 
   socket.value = io(socketUrl);
 
-  socket.value.on("connect", () => {
+  // Join Game Logic
+  const joinMatch = () => {
+    if (!socket.value) return;
+
+    // Reset Local States
+    isDead.value = false;
+    isWinner.value = false;
+    spectatingId.value = null;
+    hideDeathOverlay.value = false;
+    killMessages.value = [];
+    myRank.value = 0;
+
     // Get Skin Color
     const heroId = gameStore.selectedHeroId;
     const skinIdx = gameStore.getSelectedSkin(heroId);
     const hero = gameStore.allHeroes.find((h) => h.id === heroId);
     const skinColor = hero?.skins[skinIdx]?.value || "#ffffff";
 
-    // console.log("Joining with token:", auth.token ? "PRESENT" : "MISSING");
     socket.value.emit("join_game", {
       heroId: heroId,
       username: auth.user?.username,
       skinColor: skinColor,
-      token: auth.token, // Send Token for verification
+      token: auth.token,
+      mode: route.query.mode || "arena",
     });
+  };
+
+  socket.value.on("connect", () => {
+    joinMatch();
+  });
+
+  socket.value.on("error_message", (msg) => {
+    // If rejected from queue (e.g. Match in Progress), show it in the UI
+    inQueue.value = true;
+    customStatus.value = msg + " (Retrying...)";
+    // Retry in 5s
+    setTimeout(joinMatch, 5000);
   });
 
   socket.value.on("game_init", (data) => {
+    console.log("GAME INIT RECEIVED", data);
     mapData = data.map;
     myId = data.playerId;
+    inQueue.value = false; // FORCE GAME START (Fix for Arena)
+    if (!mapData) console.error("MAP DATA MISSING!");
+  });
+
+  socket.value.on("queue_update", (data) => {
+    inQueue.value = true;
+    queueCount.value = data.count;
+    queueMax.value = data.max;
+    customStatus.value = "";
+  });
+
+  socket.value.on("queue_status", (msg) => {
+    customStatus.value = msg;
+  });
+
+  socket.value.on("queue_timer", (time) => {
+    customStatus.value = `MATCH STARTING IN ${time}s`;
+  });
+
+  socket.value.on("br_countdown", (count) => {
+    inQueue.value = false;
+    showCountdown.value = count > 0;
+    countdownVal.value = count;
+  });
+
+  socket.value.on("br_start", (data) => {
+    inQueue.value = false; // Game Start
+    mapData = data.map;
+    brZone = data.zone;
+    myId = data.playerId;
+    // Reset VFX
+    projectiles = [];
+    entities = [];
+    playerVisuals.value = {}; // Reset local visual states
+    isDead.value = false;
+    isWinner.value = false;
+    myRank.value = 0;
+    myRank.value = 0;
+    spectatingId.value = null; // Reset spectate
+    hideDeathOverlay.value = false; // Show death screen on next death
+
+    // Pre-spawn Local Player for Countdown Visibility
+    if (data.pos) {
+      players = [
+        {
+          id: myId,
+          x: data.pos.x,
+          y: data.pos.y,
+          username: auth.user?.username || "Agent",
+          hero: gameStore.selectedHero?.name || "Unknown",
+          color: data.color || "#00ccff",
+          hp: data.hp || 100, // Real Start HP
+          maxHp: data.maxHp || 100, // Real Max HP
+          alive: true,
+          powerCores: 0,
+          heroClass: data.heroClass || "Vanguard", // Ensure correct shape
+        },
+      ];
+      // Center Camera Immediately
+      cameraX = data.pos.x - window.innerWidth / 2;
+      cameraY = data.pos.y - window.innerHeight / 2;
+    } else {
+      players = [];
+    }
+  });
+
+  const hideDeathOverlay = ref(false);
+
+  socket.value.on("br_update", (data) => {
+    // Full State Pack
+    players = data.players;
+    projectiles = data.projectiles;
+    entities = data.entities;
+    crates = data.crates || [];
+    items = data.items || [];
+    brZone = data.zone;
+    aliveCount.value = data.aliveCount || 0;
+
+    // Find my stats
+    const me = players.find((p) => p.id === myId);
+    if (me) {
+      powerCores.value = me.powerCores || 0;
+      skillCD.value = me.skillCD || 0;
+      maxSkillCD.value = me.maxSkillCD || 1;
+      maxSkillCD.value = me.maxSkillCD || 1;
+      // Respect server-side death state
+      if (me.isDead) {
+        isDead.value = true;
+      } else {
+        isDead.value = false;
+      }
+    } else {
+      // If not in list, maybe dead or just spectator?
+      // Check if we died
+      const deadMe = players.find((p) => p.id === myId && p.isDead);
+
+      // If we weren't dead locally but now we are missing or marked dead
+      // Actually, manager sends 'isDead: true'
+      if (deadMe && deadMe.isDead) {
+        isDead.value = true;
+      }
+    }
+
+    // Auto Spectate & Switch Logic
+    if (isDead.value && players.length > 0) {
+      const currentTarget = players.find((p) => p.id === spectatingId.value);
+
+      // If Not Spectating OR Target Dead/Missing -> Find New Target
+      if (!spectatingId.value || !currentTarget || currentTarget.isDead) {
+        const livePlayer = players.find((p) => !p.isDead && p.id !== myId);
+        if (livePlayer) {
+          spectatingId.value = livePlayer.id;
+        }
+      }
+    }
+  });
+
+  socket.value.on("br_rewards", (data) => {
+    console.log("CLIENT RECEIVED COINS:", data.coins);
+    earnedCoins.value = data.coins;
+  });
+
+  socket.value.on("br_eliminated", (data) => {
+    isDead.value = true;
+    myRank.value = data.rank;
+    if (data.killedBy) killedBy.value = data.killedBy;
+    if (data.killedByHero) killedByHero.value = data.killedByHero;
+
+    // Auto Spectate Killer
+    if (data.killerId) {
+      spectatingId.value = data.killerId;
+    }
+  });
+
+  socket.value.on("br_game_over", (data) => {
+    console.log("GAME OVER. Winner:", data.winner, "Coins:", data.coinsEarned);
+    winnerName.value = data.winner;
+
+    // Only show Winner Coins if I am the winner
+    if (auth.user && data.winner === auth.user.username) {
+      isWinner.value = true;
+      if (data.coinsEarned) earnedCoins.value = data.coinsEarned;
+    }
+
+    setTimeout(() => router.push("/dashboard"), 8000);
   });
 
   socket.value.on("player_died", (data) => {
@@ -120,8 +315,10 @@ onMounted(async () => {
       spawnHitSparks(data.x, data.y, data.color);
       // Sprite Flash Logic
       if (data.targetId) {
-        const victim = players.find((p) => p.id === data.targetId);
-        if (victim) victim.flashTime = 5; // Flash for 5 frames
+        if (!playerVisuals.value[data.targetId]) {
+          playerVisuals.value[data.targetId] = { flashTime: 0 };
+        }
+        playerVisuals.value[data.targetId].flashTime = 78; // Flash for 1.3 seconds (78 frames @ 60fps)
       }
     } else if (data.type === "black_hole_explode") {
       spawnExplosion(data.x, data.y, "#d000ff");
@@ -190,6 +387,8 @@ onMounted(async () => {
 
   canvasRef.value.width = window.innerWidth;
   canvasRef.value.height = window.innerHeight;
+  bushCanvas.width = window.innerWidth;
+  bushCanvas.height = window.innerHeight;
 
   if (isMobile.value) {
     await nextTick();
@@ -209,12 +408,32 @@ onMounted(async () => {
   }, 30);
 });
 
+const handleResize = () => {
+  if (canvasRef.value) {
+    canvasRef.value.width = window.innerWidth;
+    canvasRef.value.height = window.innerHeight;
+    bushCanvas.width = window.innerWidth;
+    bushCanvas.height = window.innerHeight;
+  }
+};
+
+// Add listener in the MAIN onMounted logic if possible, or just add a separate one.
+// The file has one big onMounted at line ~356.
+// I inserted a NEW onMounted block above. This is valid in Vue 3 (multiple hooks run in order),
+// BUT it's messy.
+// Let's just keep the listener addition here.
+
+onMounted(() => {
+  window.addEventListener("resize", handleResize);
+});
+
 onUnmounted(() => {
   if (socket.value) socket.value.disconnect();
   window.removeEventListener("keydown", handleKey);
   window.removeEventListener("keyup", handleKey);
   window.removeEventListener("mousemove", handleMouse);
   window.removeEventListener("keypress", handleSkill);
+  window.removeEventListener("resize", handleResize);
   cancelAnimationFrame(animationId);
 });
 
@@ -325,18 +544,12 @@ const stopShooting = () => {
   keys.space = false;
 };
 
-const handleResize = () => {
-  if (canvasRef.value) {
-    canvasRef.value.width = window.innerWidth;
-    canvasRef.value.height = window.innerHeight;
-  }
-};
-
 // === RENDERING ===
-const drawMap = (ctx) => {
+// === RENDERING ===
+const drawGrid = (ctx) => {
   if (!mapData) return;
 
-  // Draw Grid
+  // Draw Infinite Grid
   ctx.strokeStyle = "#222233";
   ctx.lineWidth = 2;
   const gridSize = 100;
@@ -365,16 +578,116 @@ const drawMap = (ctx) => {
     ctx.stroke();
   }
 
-  // Draw Arena Boundary with Pulse
-  const pulse = Math.abs(Math.sin(Date.now() / 1000)) * 20 + 10;
-  ctx.strokeStyle = "#00f3ff";
-  ctx.lineWidth = 3;
-  ctx.shadowColor = "#00f3ff";
-  ctx.shadowBlur = pulse;
-  ctx.strokeRect(0 - cameraX, 0 - cameraY, 1600, 1200);
+  // Map Boundary
+  if (mapData.width < 2000) {
+    // ARENA MODE - CLASSIC BLUE NEON
+    const pulse = Math.abs(Math.sin(Date.now() / 1000)) * 20 + 10;
+    ctx.strokeStyle = "#00f3ff";
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#00f3ff";
+    ctx.shadowBlur = pulse;
+    ctx.strokeRect(0 - cameraX, 0 - cameraY, mapData.width, mapData.height);
+  } else {
+    // BR MODE - DARK INDUSTRIAL
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 5;
+    ctx.shadowBlur = 0;
+    ctx.strokeRect(0 - cameraX, 0 - cameraY, mapData.width, mapData.height);
+  }
   ctx.shadowBlur = 0; // Reset
+};
 
-  // Draw Obstacles
+const drawFloorDeco = (ctx) => {
+  if (!mapData) return;
+
+  // Safe Crates Check
+  if (!crates) crates = [];
+
+  // DRAW CRATES (Underneath players & walls)
+  crates.forEach((c) => {
+    const sx = c.x - cameraX;
+    const sy = c.y - cameraY;
+
+    // Cull Crates
+    if (
+      sx < -50 ||
+      sx > window.innerWidth + 50 ||
+      sy < -50 ||
+      sy > window.innerHeight + 50
+    )
+      return;
+
+    if (c.active) {
+      // Neon Box
+      ctx.fillStyle = "rgba(20, 20, 30, 0.9)";
+      ctx.fillRect(sx, sy, c.w, c.h);
+
+      // Border
+      ctx.strokeStyle = "#00f3ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx, sy, c.w, c.h);
+
+      // Inner Glow (Start Removing expensive Blur)
+      // ctx.shadowColor = "#00f3ff";
+      // ctx.shadowBlur = 10;
+      ctx.fillStyle = "rgba(0, 243, 255, 0.1)";
+      ctx.fillRect(sx + 5, sy + 5, c.w - 10, c.h - 10);
+      // ctx.shadowBlur = 0;
+
+      // X pattern
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + c.w, sy + c.h);
+      ctx.moveTo(sx + c.w, sy);
+      ctx.lineTo(sx, sy + c.h);
+      ctx.strokeStyle = "rgba(0, 243, 255, 0.3)";
+      ctx.stroke();
+    }
+
+    if (c.hp < c.maxHp) {
+      // HP Bar logic...
+      // Simplified HP Bar drawing
+      const pct = c.hp / c.maxHp;
+      const barW = c.w;
+      const barH = 5;
+      const barX = sx;
+      const barY = sy - 10;
+
+      ctx.fillStyle = "#333";
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = "#00ff00";
+      ctx.fillRect(barX, barY, barW * pct, barH);
+    }
+  });
+
+  // DRAW ITEMS
+  items.forEach((i) => {
+    const sx = i.x - cameraX;
+    const sy = i.y - cameraY;
+
+    // Cull Items
+    if (
+      sx < -20 ||
+      sx > window.innerWidth + 20 ||
+      sy < -20 ||
+      sy > window.innerHeight + 20
+    )
+      return;
+
+    ctx.fillStyle = "#00ff00"; // Green Gem
+    ctx.beginPath();
+    ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+    ctx.fill();
+    // Optimized: Removed ShadowBlur, used simplified stroke
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+};
+
+const drawWalls = (ctx) => {
+  if (!mapData || !mapData.obstacles) return;
+
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
 
@@ -382,7 +695,7 @@ const drawMap = (ctx) => {
     const screenX = obs.x - cameraX;
     const screenY = obs.y - cameraY;
 
-    // OPTIMIZATION: Viewport Culling (Don't draw off-screen)
+    // OPTIMIZATION: Viewport Culling
     if (
       screenX + obs.w < -50 ||
       screenX > screenW + 50 ||
@@ -392,27 +705,51 @@ const drawMap = (ctx) => {
       return;
     }
 
-    ctx.fillStyle = "#11111a";
-    if (obs.type === "CORE") ctx.fillStyle = "#1a1a2e";
+    // Ensure Opaque Draw
+    ctx.globalAlpha = 1.0;
 
+    // Wall Body (Solid Black to hide everything under it, e.g. bushes)
+    ctx.fillStyle = "#000000";
     ctx.fillRect(screenX, screenY, obs.w, obs.h);
 
-    // Neon Glow Border (Expensive, only draw if visible)
-    ctx.shadowBlur = 15;
+    // Neon Glow Border (Simplified for Performance)
     if (obs.type === "WALL") {
       ctx.strokeStyle = "#00f3ff";
-      ctx.shadowColor = "#00f3ff";
     } else if (obs.type === "CORE") {
       ctx.strokeStyle = "#ff00ff";
-      ctx.shadowColor = "#ff00ff";
     } else {
       ctx.strokeStyle = "#ffee00";
-      ctx.shadowColor = "#ffee00";
     }
     ctx.lineWidth = 2;
     ctx.strokeRect(screenX, screenY, obs.w, obs.h);
-    ctx.shadowBlur = 0; // Reset
   });
+};
+
+const drawZone = (ctx) => {
+  // DRAW ZONE (Simplified)
+  if (brZone) {
+    const zx = brZone.x - cameraX;
+    const zy = brZone.y - cameraY;
+
+    // Pulse
+    const pulse = Math.sin(Date.now() / 200) * 5;
+
+    // Draw "Storm" using thick stroke instead of expensive clipping
+    ctx.beginPath();
+    ctx.arc(zx, zy, brZone.radius + 2000, 0, Math.PI * 2); // Radius + half width covers outside
+    ctx.strokeStyle = "rgba(20, 0, 0, 0.4)"; // Storm Color
+    ctx.lineWidth = 4000; // Humongous line acts as fill outside
+    ctx.stroke();
+
+    // Zone Border
+    ctx.beginPath();
+    ctx.arc(zx, zy, brZone.radius + pulse, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255, 50, 50, 0.9)"; // Stronger Red
+    ctx.lineWidth = 20;
+    ctx.setLineDash([20, 20]); // Tech look
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 };
 
 // === PARTICLES ===
@@ -536,8 +873,8 @@ const drawParticles = (ctx) => {
 };
 
 const drawProjectiles = (ctx) => {
+  // Batch settings to minimize state changes if possible, but colors vary.
   projectiles.forEach((p) => {
-    // Skip mines here if they are in 'entities' array, usually projectiles are bullets
     if (p.type === "MINE") return;
 
     // BLACK HOLE SHOT (Nova)
@@ -546,24 +883,13 @@ const drawProjectiles = (ctx) => {
       const sy = p.y - cameraY;
       ctx.save();
       ctx.translate(sx, sy);
-
-      // Dark Orb (Much Larger)
       ctx.beginPath();
       ctx.arc(0, 0, 20, 0, Math.PI * 2);
       ctx.fillStyle = "#000";
       ctx.fill();
-      ctx.strokeStyle = "#800080"; // Purple
+      ctx.strokeStyle = "#800080";
       ctx.lineWidth = 3;
       ctx.stroke();
-
-      // Aura
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = "#800080";
-      ctx.beginPath();
-      ctx.arc(0, 0, 30, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(128, 0, 128, 0.5)";
-      ctx.stroke();
-
       ctx.restore();
       return;
     }
@@ -633,20 +959,24 @@ const drawProjectiles = (ctx) => {
     const sy = p.y - cameraY;
 
     ctx.fillStyle = p.color || "#fff";
+
+    // FAST GLOW (No ShadowBlur)
+    ctx.globalAlpha = 0.4;
     ctx.beginPath();
-    ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+
+    // Core
+    ctx.beginPath();
+    ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
     ctx.fill();
 
-    // VISIBILITY FIX: Outline for dark bullets
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 1.5;
+    // VISIBILITY FIX: Outline
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.lineWidth = 1;
     ctx.stroke();
-
-    // Glow
-    ctx.shadowColor = p.color === "#000000" ? "#ffffff" : p.color || "#fff";
-    ctx.shadowBlur = 10;
-    ctx.fill();
-    ctx.shadowBlur = 0;
   });
 };
 
@@ -656,145 +986,66 @@ const drawPlayer = (ctx, p) => {
 
   const screenX = p.x - cameraX;
   const screenY = p.y - cameraY;
+
+  // OPTIMIZATION: Cull off-screen players
+  // Margin 100px for names/bars/effects
+  if (
+    screenX < -150 ||
+    screenX > window.innerWidth + 150 ||
+    screenY < -150 ||
+    screenY > window.innerHeight + 150
+  )
+    return;
+
   const isMe = p.id === myId;
   const primaryColor = p.color || (isMe ? "#00ccff" : "#ff3333");
 
+  // Use Class to determine shape if specific hero not defined
+  const heroClass = p.heroClass || p.hero?.class || "Damage";
+  const heroName = p.heroName || p.hero?.name || "Unknown";
+
   // Emit Particles based on Hero
   if (Math.random() > 0.5) {
-    if (p.hero === "Spectre") createParticle(p.x, p.y, "#aa00ff", 2, 20); // Purple Trail
-    if (p.hero === "Vanguard" && p.shield)
+    if (heroName === "Spectre") createParticle(p.x, p.y, "#aa00ff", 2, 20); // Purple Trail
+    if (heroName === "Vanguard" && p.shield)
       createParticle(p.x, p.y, "#00ffff", 3, 30); // Shield Sparks
   }
+  // DRAW PLAYER
+  if (p.dead || p.hp <= 0) return; // Hide body on death
 
   ctx.save();
 
-  // --- FLASH EFFECT ON HIT (Highest Priority) ---
-  if (p.flashTime > 0) {
-    ctx.translate(screenX, screenY);
-    ctx.rotate(p.angle + Math.PI / 2);
-
-    // Draw WHITE silhouette
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.moveTo(0, -30); // Tip
-    ctx.lineTo(20, 20);
-    ctx.lineTo(-20, 20);
-    ctx.fill();
-
-    ctx.restore();
-    return; // Skip standard drawing
-  }
-
   // Stealth Handler
   if (p.invisible) {
-    if (p.id === myId) {
-      ctx.globalAlpha = 0.4; // Visible to self
+    // REVEAL LOGIC: Visible if Me OR Flashing (Hit)
+    if (p.id === myId || p.flashTime > 0) {
+      ctx.globalAlpha = 0.6; // Visible (Ghostly)
     } else {
-      ctx.globalAlpha = 0; // Invisible to others
+      ctx.globalAlpha = 0; // Invisible
     }
   }
 
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2);
+
   // --- DRAW PLAYER SHIP ---
   // Layer 1: Base Hull
   ctx.fillStyle = primaryColor;
-  ctx.shadowBlur = 15;
-  ctx.shadowColor = primaryColor;
 
-  ctx.beginPath();
-  ctx.moveTo(0, -25); // Nose
-  ctx.lineTo(20, 20); // Right Rear
-  ctx.lineTo(0, 10); // Rear Indent
-  ctx.lineTo(-20, 20); // Left Rear
-  ctx.closePath();
-  ctx.fill();
-
-  // Reset Shadow
-  ctx.shadowBlur = 0;
-
-  // Layer 2: Cockpit
-  ctx.fillStyle = "#ffffff"; // Glass
-  ctx.beginPath();
-  ctx.arc(0, 5, 6, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Layer 3: Engine Glow (Rear)
-  ctx.fillStyle = "#00ffff";
-  ctx.beginPath();
-  ctx.arc(0, 15, 4 + Math.random() * 2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Continue to Stealth/Laser/Reticle (still in transformed state)
-
-  // --- STEALTH RING INDICATOR (User Request) ---
-  if (p.invisible && isMe) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, 0, 35, 0, Math.PI * 2);
-    ctx.setLineDash([5, 5]); // Dashed
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; // Visible White Ring
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
+  // Flash Glow (Damage)
+  // User Request: "Apparition thing works only in bush"
+  // We INTERPRET this as: White Flash (Reveal Effect) only for Invisible players.
+  // Standard players just get subtle hit feedback or standard shadow.
+  if (p.flashTime > 0 && p.invisible) {
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ffffff"; // Bright Reveal Flash
+  } else {
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = primaryColor; // Standard Glow
   }
 
-  // DRAW LASER SIGHT (Sniper) - INSIDE drawPlayer or loop
-  if (isMe && (p.hero === "Sniper" || p.heroClass === "Sniper")) {
-    // Check Cooldown
-    if (p.skillCD <= 0) {
-      const cx = 0; // Local coordinates (translated)
-      const cy = 0;
-      const range = 2000;
-
-      // We are already rotated by angle + PI/2
-      // So "Forward" is -Y (Up in screen space) relative to rotation?
-      // Actually, we are drawing in Player Local Space.
-      // drawPlayer translates to X,Y and Rotates.
-      // Mouse Angle is absolute.
-      // If we draw a line here, it will rotate with player.
-      // Line should go "Up" (-Y) relative to player sprite if sprite faces up.
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(0, 0); // Center of player
-      ctx.lineTo(0, -range); // Draw line "Forward"
-      ctx.strokeStyle = "rgba(255, 0, 0, 0.5)"; // Red Laser
-      ctx.lineWidth = 2;
-      ctx.setLineDash([20, 10]); // Dashed
-      ctx.stroke();
-      ctx.restore();
-    }
+  if (heroClass === "Tank") {
   }
-
-  if (isMe) {
-    // --- AIM RETICLE ---
-    // Draw a direction indicator (Laser Sight / Arrow)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, -40); // Much shorter (was -100)
-    ctx.stroke();
-    ctx.setLineDash([]); // Reset
-
-    // Aim Dot
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(0, -40, 3, 0, Math.PI * 2);
-    ctx.fill();
-    // Arrow Head
-    ctx.beginPath();
-    ctx.moveTo(0, -50);
-    ctx.lineTo(5, -40);
-    ctx.lineTo(-5, -40);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Use Class to determine shape if specific hero not defined
-  const heroClass = p.heroClass || "Damage";
 
   // --- POISON AURA (VIPER EFFECT) ---
   if (p.isPoisoned) {
@@ -890,7 +1141,7 @@ const drawPlayer = (ctx, p) => {
     // Shield
     if (p.shield) {
       // CITADEL: 360 Shield if Invincible/Citadel
-      if (p.hero === "Citadel") {
+      if (p.hero === "Citadel" || heroName === "Citadel") {
         ctx.beginPath();
         ctx.arc(0, 0, 45, 0, Math.PI * 2); // Full Circle
         ctx.strokeStyle = "#00ffff";
@@ -989,29 +1240,298 @@ const drawPlayer = (ctx, p) => {
     ctx.stroke();
   }
 
+  ctx.stroke();
+
+  // SNIPER LASER SIGHT
+  // Visible ONLY to Local Player AND when Skill is Ready (E)
+  if (
+    (heroName === "Sniper" || p.hero === "Sniper") &&
+    p.id === myId &&
+    (p.skillCD || 0) <= 0
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(0, -35); // Start at gun tip (outside body)
+    ctx.lineTo(0, -2000); // 2000px aiming line (X-Ray)
+
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // 0.8 Opacity (Clearer)
+    ctx.lineWidth = 2; // Thicker to see dashes
+    ctx.setLineDash([20, 20]); // Larger dashes
+
+    // Laser Glow
+    ctx.shadowColor = "#ff0000";
+    ctx.shadowBlur = 10;
+
+    ctx.stroke();
+    ctx.shadowBlur = 0; // Reset
+    ctx.setLineDash([]); // Reset Explicitly just in case
+  }
+
+  // FROST EFFECT (Frozen Enemy)
+  if (p.isFrozen || p.isRooted) {
+    // Check property name from server (likely isRooted or custom speed check)
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 255, 255, 0.4)";
+    ctx.strokeStyle = "#00ffff";
+    ctx.lineWidth = 2;
+    // Draw Ice Cube around player
+    ctx.fillRect(-25, -25, 50, 50);
+    ctx.strokeRect(-25, -25, 50, 50);
+
+    // Crack details
+    ctx.beginPath();
+    ctx.moveTo(-15, -15);
+    ctx.lineTo(0, 0);
+    ctx.lineTo(15, -5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // GENERIC AIM CURSOR (Only Local Player)
+  if (p.id === myId) {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.moveTo(0, -40); // Tip (Front)
+    ctx.lineTo(5, -30); // Back Right
+    ctx.lineTo(0, -32); // Indent
+    ctx.lineTo(-5, -30); // Back Left
+    ctx.fill();
+  }
+
   ctx.restore();
 
-  // === UI ELEMENTS ABOVE PLAYER ===
-  if (p.invisible && p.id !== myId) return; // Don't show HUD for hidden enemies
+  // === UI ELEMENTS MOVED TO drawPlayerNames (Sorted Z-Index) ===
+  // Only Cast Animation remains on the player layer
+  if (p.isSkillActive) {
+    const time = Date.now() / 200;
+    ctx.save();
+    ctx.translate(screenX, screenY);
+    ctx.rotate(time);
 
-  // 1. HP Bar
-  const maxHp = p.maxHp || 100;
-  const hpPercent = Math.max(0, Math.min(1, p.hp / maxHp));
-
-  ctx.fillStyle = "#333";
-  ctx.fillRect(screenX - 30, screenY - 55, 60, 6);
-  ctx.fillStyle = "#00ff00";
-  ctx.fillRect(screenX - 30, screenY - 55, 60 * hpPercent, 6);
-
-  // 3. Username Tag
-  ctx.fillStyle = "#fff";
-  ctx.font = 'bold 14px "Segoe UI"';
-  ctx.textAlign = "center";
-  ctx.shadowColor = "#000";
-  ctx.shadowBlur = 4;
-  ctx.fillText(p.username || p.hero, screenX, screenY - 65);
+    // Circle removed as per user request
+    ctx.restore();
+  }
   ctx.shadowBlur = 0;
-  ctx.shadowBlur = 0;
+};
+
+const getPlayerBushId = (p) => {
+  if (!mapData || !mapData.bushes) return -1;
+  for (let i = 0; i < mapData.bushes.length; i++) {
+    const b = mapData.bushes[i];
+    // AABB Check for Rectangular Bushes
+    // Player is point (center) vs Rect (b.x, b.y, b.w, b.h)
+    // Actually b is defined as center or top-left?
+    // Usually Rect is top-left. Let's assume MapData gives top-left x,y and w,h.
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
+      return i;
+    }
+  }
+  return -1;
+};
+
+const drawBushes = (ctx) => {
+  if (!mapData || !mapData.bushes) return;
+
+  // 1. Clear Offscreen
+  bushCtx.clearRect(0, 0, bushCanvas.width, bushCanvas.height);
+
+  // 2. Draw ALL Bushes OPAQUE on Offscreen
+  bushCtx.save();
+  // Translate like the main camera
+  // We need to apply same translation logic: manual subtraction of cameraX/Y
+  // But wait, our 'drawMap' logic uses manual coordinates.
+  // So we just draw rects.
+
+  bushCtx.fillStyle = "#0a4d0a"; // Dark bush
+  bushCtx.strokeStyle = "#006600";
+  bushCtx.lineWidth = 3;
+
+  mapData.bushes.forEach((b) => {
+    const sx = b.x - cameraX;
+    const sy = b.y - cameraY;
+    // Optimization check
+    if (
+      sx + b.w < -50 ||
+      sx > bushCanvas.width + 50 ||
+      sy + b.h < -50 ||
+      sy > bushCanvas.height + 50
+    )
+      return;
+
+    bushCtx.fillRect(sx, sy, b.w, b.h);
+    bushCtx.strokeRect(sx, sy, b.w, b.h);
+
+    // Highlight (Disabled for Performance)
+    // bushCtx.fillStyle = "rgba(255, 255, 255, 0.05)";
+    // bushCtx.fillRect(sx + 5, sy + 5, b.w * 0.4, b.h * 0.4);
+
+    bushCtx.fillStyle = "#0a4d0a"; // Reset
+  });
+  bushCtx.restore();
+
+  // 3. Punch Holes for Vision (Dynamic Fog of War)
+  bushCtx.save();
+  bushCtx.globalCompositeOperation = "destination-out";
+
+  // A. REVEAL ME
+  const me = players.find((p) => p.id === myId);
+  if (me) {
+    const mx = me.x - cameraX;
+    const my = me.y - cameraY;
+
+    // Soft Circle Gradient
+    const radius = 320; // Vision Radius
+    const grad = bushCtx.createRadialGradient(mx, my, 50, mx, my, radius);
+    grad.addColorStop(0, "rgba(0,0,0,0.7)"); // Only remove 70%
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+
+    bushCtx.fillStyle = grad;
+    bushCtx.beginPath();
+    bushCtx.arc(mx, my, radius, 0, Math.PI * 2);
+    bushCtx.fill();
+  }
+
+  // B. REVEAL ANYONE TAKING DAMAGE (User Request: "tout le monde puisse le voir le temps du dégat")
+  // We punch a FULL hole or Partial hole for damaged players?
+  // "tout le monde puisse le voir" -> implies full visibility.
+
+  // Also clear for Spectator target?
+  if (spectatingId.value && !me) {
+    const target = players.find((p) => p.id === spectatingId.value);
+    if (target) {
+      const tx = target.x - cameraX;
+      const ty = target.y - cameraY;
+      const radius = 320;
+      const grad = bushCtx.createRadialGradient(tx, ty, 50, tx, ty, radius);
+      grad.addColorStop(0, "rgba(0,0,0,0.7)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      bushCtx.fillStyle = grad;
+      bushCtx.beginPath();
+      bushCtx.arc(tx, ty, radius, 0, Math.PI * 2);
+      bushCtx.fill();
+    }
+  }
+
+  bushCtx.restore();
+
+  // 4. Draw Offscreen to Main
+  // We apply the shake translation if needed?
+  // The 'drawBushes' call is inside the main 'ctx.save()' which ALREADY has shake applied.
+  // HOWEVER, we drew to bushCanvas using raw screen coordinates (x - cameraX).
+  // If we draw bushCanvas at (0,0), it will align perfectly with other things drawn at (x-cameraX).
+  // BUT the 'ctx' currently has a translate(shakeX, shakeY).
+  // Does our offscreen buffer have shake? No.
+  // So:
+  // - Main Ctx is shifted by Shake.
+  // - Offscreen bushes were drawn relative to Camera (not shook).
+  // - If we drawImage(bushCanvas, 0, 0), it will be shifted by Shake again essentially.
+  // - Wait. Grid, Walls etc use coordinate "x - cameraX".
+  // - Shake adds "translate(sx, sy)". So "x - cameraX + sx".
+  // - Our BushCanvas matches "x - cameraX".
+  // - So drawImage(bushCanvas, 0,0) inside the shook context -> "0 + sx, 0 + sy".
+  // - The pixel at "100" in bushCanvas represents "100 - cameraX".
+  // - On screen it lands at "100 + sx".
+  // - This is correct.
+
+  ctx.drawImage(bushCanvas, 0, 0);
+};
+
+// NEW: Draw Names ON TOP of everything
+const drawPlayerNames = (ctx) => {
+  const me = players.find((p) => p.id === myId);
+  if (!me) return;
+
+  players.forEach((p) => {
+    if (p.invisible && p.id !== myId) return; // Don't show HUD for hidden enemies
+
+    const screenX = p.x - cameraX;
+    const screenY = p.y - cameraY;
+
+    // OPTIMIZATION: Cull off-screen names (Text is expensive)
+    if (
+      screenX < -100 ||
+      screenX > window.innerWidth + 100 ||
+      screenY < -100 ||
+      screenY > window.innerHeight + 100
+    )
+      return;
+
+    // BUSH HIDING LOGIC for Names
+    const myBushId = getPlayerBushId(me);
+    const targetBushId = getPlayerBushId(p);
+
+    // VISIBILITY CHECK:
+    // 1. Same Bush? -> Visible
+    // 2. Proximity? (Within Fog of War radius) -> Visible
+    // 3. Otherwise -> Hidden if in bush
+
+    const dist = Math.hypot(p.x - me.x, p.y - me.y);
+    const visionRadius = 320; // Match the new radius
+
+    // Hidden if:
+    // - Target is in a bush
+    // - AND We are NOT in the same bush
+    // - AND Target is OUTSIDE my vision radius
+    // - AND Target is not me
+
+    const inBush = targetBushId !== -1;
+    const sameBush = targetBushId === myBushId && myBushId !== -1;
+    const inVision = dist < visionRadius;
+
+    const visuals = playerVisuals.value[p.id];
+    const isDamaged = visuals && visuals.flashTime > 0;
+
+    // Logic: Show if (Not in bush) OR (In same bush) OR (In Vision) OR (Is Damaged) OR (Is Me)
+    // So Hide if: (In Bush) AND (!Same Bush) AND (!In Vision) AND (!Is Damaged) AND (!Is Me)
+
+    const isHidden =
+      inBush && !sameBush && !inVision && !isDamaged && p.id !== myId;
+
+    if (p.dead || p.hp <= 0) return; // Hide HUD on death
+    if (isHidden) return;
+
+    // Username Tag
+    ctx.fillStyle = "#fff";
+    ctx.font = 'bold 14px "Segoe UI"';
+    ctx.textAlign = "center";
+    ctx.shadowColor = "#000";
+    ctx.shadowBlur = 4;
+    ctx.fillText(p.username || p.hero, screenX, screenY - 65);
+
+    // CORES DISPLAY
+    if (p.powerCores !== undefined) {
+      const coreY = screenY - 85;
+      ctx.fillStyle = "#00ff00";
+      ctx.beginPath();
+      ctx.arc(screenX - 10, coreY - 4, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#00ff00";
+      ctx.fillText(p.powerCores, screenX + 5, coreY);
+    }
+
+    // HP Bar (Keep with name)
+    const maxHp = p.maxHp || 100;
+    const hpPct = Math.max(0, p.hp / maxHp);
+    const barW = 100; // Increased Width
+    const barH = 14; // Increased Height for TEXT
+    const barX = screenX - barW / 2;
+    const barY = screenY - 60;
+
+    ctx.fillStyle = "#333";
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = p.id === myId ? "#00ff00" : "#ff0000";
+    ctx.fillRect(barX, barY, barW * hpPct, barH);
+
+    // HP Text
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px 'Segoe UI'";
+    ctx.textAlign = "center";
+    // Centered in bar
+    ctx.fillText(
+      `${Math.ceil(p.hp)} / ${Math.ceil(maxHp)}`,
+      screenX,
+      barY + 11
+    );
+  });
 };
 
 const drawLeaderboard = (ctx) => {
@@ -1022,8 +1542,8 @@ const drawLeaderboard = (ctx) => {
 
   const boxW = 200;
   const boxH = 30 + top5.length * 25;
-  const startX = window.innerWidth - boxW - 20;
-  const startY = 100; // Moved down to avoid "EXIT" button overlap
+  const startX = window.innerWidth - boxW - 20; // Moved to RIGHT
+  const startY = 160; // Below Rank/HUD & Abort Button
 
   // Bg
   ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
@@ -1060,10 +1580,14 @@ const drawLeaderboard = (ctx) => {
 
 const loop = (ctx) => {
   // Update Camera
-  const me = players.find((p) => p.id === myId);
-  if (me) {
-    const targetX = me.x - window.innerWidth / 2;
-    const targetY = me.y - window.innerHeight / 2;
+  let target = players.find((p) => p.id === myId);
+  if (!target && spectatingId.value) {
+    target = players.find((p) => p.id === spectatingId.value);
+  }
+
+  if (target) {
+    const targetX = target.x - window.innerWidth / 2;
+    const targetY = target.y - window.innerHeight / 2;
     cameraX += (targetX - cameraX) * 0.1;
     cameraY += (targetY - cameraY) * 0.1;
   }
@@ -1092,14 +1616,20 @@ const loop = (ctx) => {
   }
 
   ctx.save();
-  ctx.translate(shakeX, shakeY); // Apply Shake
+  if (shakeDuration > 0) {
+    ctx.translate(shakeX, shakeY);
+  }
 
-  // Draw World
-  drawMap(ctx);
+  // 1. Grid & Floor
+  drawGrid(ctx);
 
-  drawShockwaves(ctx);
+  // 2. Floor Decoration (Crates, Items) - UNDER Players
+  drawFloorDeco(ctx);
 
-  // Draw Entities (Mines, Decoys, Black Holes) - BACKGROUND LAYER
+  // 3. Projectiles MOVED AFTER BUSHES for visibility
+  // drawProjectiles(ctx); MOVED
+
+  // 4. Entities (Mines, Decoys) - BACKGROUND LAYER
   entities.forEach((ent) => {
     if (ent.type === "MINE") {
       const sx = ent.x - cameraX;
@@ -1115,11 +1645,32 @@ const loop = (ctx) => {
     } else if (ent.type === "WALL_TEMP") {
       const sx = ent.x - cameraX;
       const sy = ent.y - cameraY;
-      ctx.fillStyle = "rgba(0, 243, 255, 0.3)";
-      ctx.fillRect(sx, sy, ent.w, ent.h);
-      ctx.strokeStyle = "#00f3ff";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(sx, sy, ent.w, ent.h);
+
+      ctx.save();
+      // If angle is provided, rotate around center
+      if (typeof ent.angle === "number") {
+        const cx = sx + ent.w / 2;
+        const cy = sy + ent.h / 2;
+        ctx.translate(cx, cy);
+        ctx.rotate(ent.angle);
+        // If we have base dimensions (visual size), use them centered
+        // Otherwise use the collision box (ent.w/h) centered
+        const vw = ent.baseW || ent.w;
+        const vh = ent.baseH || ent.h;
+        ctx.fillStyle = "rgba(0, 243, 255, 0.3)";
+        ctx.fillRect(-vw / 2, -vh / 2, vw, vh);
+        ctx.strokeStyle = "#00f3ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-vw / 2, -vh / 2, vw, vh);
+      } else {
+        // Fallback for non-rotated
+        ctx.fillStyle = "rgba(0, 243, 255, 0.3)";
+        ctx.fillRect(sx, sy, ent.w, ent.h);
+        ctx.strokeStyle = "#00f3ff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx, sy, ent.w, ent.h);
+      }
+      ctx.restore();
     } else if (ent.type === "DECOY") {
       // Draw Decoy (REALISTIC: Identical to real player)
       ctx.save();
@@ -1138,20 +1689,62 @@ const loop = (ctx) => {
     }
   });
 
-  // Draw Projectiles (Bullets) - FOREGROUND LAYER (On top of Black Hole)
-  drawProjectiles(ctx);
-
-  // Draw Players
+  // 5. Players
   players.forEach((p) => {
+    // Inject Flash Time for drawPlayer (visual glow)
+    const visuals = playerVisuals.value[p.id];
+    if (visuals && visuals.flashTime > 0) {
+      p.flashTime = visuals.flashTime; // Pass to drawPlayer
+      visuals.flashTime--; // Decay
+    }
+
     drawPlayer(ctx, p);
-    if (p.flashTime > 0) p.flashTime--; // Decay flash
   });
 
-  // Draw Particles (ON TOP)
+  // 6. DRAW BUSHES (Over Players, Hiding them)
+  drawBushes(ctx);
+
+  // 7. PROJECTILES (Over Bushes - User Request: "voir mes balles traverse")
+  drawProjectiles(ctx);
+
+  // 7.5. EXPOSED PLAYERS (Draw ON TOP of bushes if damaged)
+  // User Request: "pas que sa fasse un trou... qui se mette devant le buisson"
+  players.forEach((p) => {
+    const visuals = playerVisuals.value[p.id];
+    if (visuals && visuals.flashTime > 0) {
+      // If damaged, we draw them again here so they appear ON TOP of the bush
+      drawPlayer(ctx, p);
+    }
+  });
+
+  // 8. DRAW WALLS (Over Bushes, Occluding them)
+  drawWalls(ctx);
+
+  // 8.5. PHASING PLAYERS (Ghost/Spectre Capability)
+  // Draw them *over* walls if they are using their ability.
+  players.forEach((p) => {
+    // Check for Ghost phasing or generic "Skill Active" state (if used for visual override)
+    if (p.isPhasing || p.isSkillActive) {
+      // Redraw player to appear above the wall.
+      // Optional: Add some transparency to show "ghostly" nature?
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      drawPlayer(ctx, p);
+      ctx.restore();
+    }
+  });
+
+  // 8. PARTICLES & VFX (Over Everything usually)
   drawParticles(ctx);
   drawShockwaves(ctx);
 
-  ctx.restore(); // End Shake Translation
+  // 9. PLAYER NAMES & HUD (ABSOLUTE TOP LAYER)
+  drawPlayerNames(ctx);
+
+  // 10. ZONE OVERLAY
+  drawZone(ctx);
+
+  ctx.restore(); // End Context Save (Shake)
 
   // DRAW FLASH OVERLAY (Post-Shake)
   if (flashAlpha > 0) {
@@ -1164,11 +1757,56 @@ const loop = (ctx) => {
 
   animationId = requestAnimationFrame(() => loop(ctx));
 };
+
+if (canvasRef.value) {
+  const ctx = canvasRef.value.getContext("2d");
+  loop(ctx);
+}
 </script>
 
 <template>
   <div class="game-view">
     <canvas ref="canvasRef" class="game-canvas"></canvas>
+
+    <!-- QUEUE OVERLAY (Matchmaking) -->
+    <div v-if="inQueue" class="queue-overlay">
+      <div class="radar-container">
+        <div class="radar-sweep"></div>
+        <div class="radar-grid"></div>
+      </div>
+
+      <div class="mm-content">
+        <h1 class="glitch-text">SEARCHING FOR AGENTS</h1>
+
+        <div class="mm-stats">
+          <div class="stat-row">
+            <span class="label">OPERATIVES FOUND:</span>
+            <span class="value">{{ queueCount }} / {{ queueMax }}</span>
+          </div>
+          <div class="stat-row">
+            <span class="label">STATUS:</span>
+            <span class="value status-blink">{{
+              customStatus || "SCANNING REGION..."
+            }}</span>
+          </div>
+        </div>
+
+        <div class="mm-tips">
+          <span class="tip-label">TIP:</span>
+          <span class="tip-text"
+            >Destroy crates to gather Power Cores and increase HP.</span
+          >
+        </div>
+      </div>
+    </div>
+
+    <!-- BR HUD -->
+    <div v-if="aliveCount > 0" class="br-hud-top-right">
+      <div class="alive-counter">
+        <span class="label">ALIVE</span>
+        <span class="value">{{ aliveCount }}</span>
+      </div>
+    </div>
 
     <!-- Kill Feed -->
     <div class="kill-feed">
@@ -1177,18 +1815,140 @@ const loop = (ctx) => {
       </div>
     </div>
 
+    <!-- TOP RIGHT RANK (User Request) -->
+    <div
+      class="top-right-rank-hud"
+      v-if="!inQueue && !isDead && route.query.mode === 'battle_royale'"
+    >
+      <div class="rank-display-hud">TOP {{ aliveCount }}</div>
+      <div class="rank-label">SURVIVORS</div>
+    </div>
+
     <!-- Respawn Overlay -->
 
-    <div class="respawn-overlay" v-if="isDead">
-      <h1>YOU DIED</h1>
-      <h2 style="color: #ff3333; margin-bottom: 5px">
-        ELIMINATED BY {{ killedBy }}
-      </h2>
-      <h3 style="color: #00f3ff; margin-bottom: 20px">
-        HERO: {{ killedByHero }}
-      </h3>
-      <div class="respawn-timer">{{ respawnTimer }}</div>
-      <p>RESPAWNING...</p>
+    <!-- GAME COUNTDOWN -->
+    <div v-if="showCountdown" class="countdown-overlay">
+      <div class="countdown-text">{{ countdownVal }}</div>
+      <div class="countdown-sub">PREPARE FOR BATTLE</div>
+    </div>
+
+    <!-- WIN SCREEN -->
+    <div v-if="isWinner" class="win-screen">
+      <div class="trophy-icon">🏆</div>
+      <h1>VICTORY ROYAL</h1>
+      <h2>CHAMPION OF THE ARENA</h2>
+      <div class="win-stats">
+        <div class="stat">
+          <span class="label">ELIMINATIONS</span>
+          <span class="val">{{
+            killMessages.filter((m) => m.text.includes("YOU")).length
+          }}</span>
+        </div>
+        <div class="stat">
+          <span class="label">CORES</span>
+          <span class="val">{{ powerCores }}</span>
+        </div>
+        <div class="stat" v-if="earnedCoins > 0">
+          <span class="label">REWARD</span>
+          <span
+            class="val"
+            style="color: #ffd700; text-shadow: 0 0 10px #ffd700"
+            >+{{ earnedCoins }}</span
+          >
+        </div>
+      </div>
+      <button class="btn btn-primary" @click="router.push('/dashboard')">
+        RETURN TO BASE
+      </button>
+    </div>
+
+    <!-- DEATH SCREEN / SPECTATOR -->
+    <div
+      class="respawn-overlay death-anim"
+      v-if="isDead && !isWinner && !hideDeathOverlay"
+    >
+      <div class="death-card">
+        <h1 class="glitch-text">
+          {{ route.query.mode === "battle_royale" ? "ELIMINATED" : "YOU DIED" }}
+        </h1>
+
+        <!-- Stats Container -->
+        <div class="death-stats">
+          <!-- Killer Info (All Modes) -->
+          <div v-if="killedBy" class="killer-section">
+            <span class="label">ELIMINATED BY</span>
+            <span class="killer-name">{{ killedBy }}</span>
+            <span class="killer-hero" v-if="killedByHero">{{
+              killedByHero
+            }}</span>
+          </div>
+
+          <!-- BR Rank Info -->
+          <div v-if="route.query.mode === 'battle_royale'" class="rank-section">
+            <div class="rank-display">
+              <span class="rank-hash">#</span>{{ myRank }}
+              <span class="rank-total">/ {{ queueMax }}</span>
+            </div>
+            <div
+              class="coin-reward"
+              v-if="earnedCoins > 0"
+              style="
+                margin-top: 15px;
+                color: #ffd700;
+                font-size: 1.5rem;
+                font-weight: bold;
+                text-shadow: 0 0 10px #ffd700;
+              "
+            >
+              +{{ earnedCoins }} COINS
+            </div>
+          </div>
+
+          <div
+            v-if="route.query.mode !== 'battle_royale'"
+            class="arena-respawn-box"
+          >
+            <div class="respawn-timer">{{ respawnTimer }}</div>
+            <p>RESPAWNING...</p>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="death-actions">
+          <button
+            class="btn btn-spectate"
+            @click="joinMatch"
+            v-if="route.query.mode === 'battle_royale'"
+          >
+            PLAY AGAIN
+          </button>
+          <button
+            class="btn btn-outline"
+            @click="hideDeathOverlay = true"
+            v-if="route.query.mode === 'battle_royale'"
+          >
+            SPECTATE
+          </button>
+          <button class="btn btn-return" @click="router.push('/dashboard')">
+            RETURN TO BASE
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SPECTATING HUD (Mini Overlay) -->
+    <div class="spectating-hud" v-if="isDead && hideDeathOverlay">
+      <div class="spec-banner">
+        SPECTATING
+        <span style="color: #00f3ff; margin-left: 10px">{{
+          spectatingId === myId
+            ? "..."
+            : players.find((p) => p.id === spectatingId)?.username || "UNKNOWN"
+        }}</span>
+      </div>
+      <button class="btn btn-sm btn-danger" @click="router.push('/dashboard')">
+        LEAVE MATCH
+      </button>
     </div>
 
     <div class="hud" v-if="!isDead">
@@ -1655,5 +2415,438 @@ const loop = (ctx) => {
   .controls-hint {
     display: none; /* Hide keyboard hints on mobile */
   }
+}
+.queue-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+  color: #fff;
+}
+.queue-title {
+  font-size: 3rem;
+  letter-spacing: 5px;
+  color: #00f3ff;
+  text-shadow: 0 0 20px #00f3ff;
+}
+.queue-count {
+  font-size: 2rem;
+  margin: 1rem 0;
+  font-weight: bold;
+}
+.queue-status {
+  color: #888;
+  letter-spacing: 2px;
+}
+
+.br-hud {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2rem;
+  z-index: 50;
+}
+.alive-counter,
+.gems-counter {
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid #00f3ff;
+  padding: 0.5rem 1.5rem;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.alive-counter .value,
+.gems-counter .value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #00f3ff;
+}
+.alive-counter .label,
+.gems-counter .label {
+  font-size: 0.8rem;
+  color: #aaa;
+}
+.gems-counter .value {
+  color: #00ff00;
+}
+.gems-counter {
+  border-color: #00ff00;
+}
+.countdown-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 200;
+}
+.countdown-text {
+  font-size: 10rem;
+  color: #fff;
+  font-weight: 900;
+  text-shadow: 0 0 50px #00f3ff;
+  animation: pulse 1s infinite;
+}
+.countdown-sub {
+  color: #00f3ff;
+  letter-spacing: 10px;
+  font-size: 2rem;
+  margin-top: -20px;
+}
+
+.win-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 300;
+  color: #ffd700;
+}
+.trophy-icon {
+  font-size: 8rem;
+  margin-bottom: 1rem;
+  filter: drop-shadow(0 0 30px gold);
+  animation: float 3s infinite ease-in-out;
+}
+.win-screen h1 {
+  font-size: 5rem;
+  text-shadow: 0 0 20px gold;
+  margin: 0;
+}
+.win-screen h2 {
+  color: #fff;
+  font-size: 1.5rem;
+  letter-spacing: 5px;
+  margin-bottom: 3rem;
+}
+.win-stats {
+  display: flex;
+  gap: 3rem;
+  margin-bottom: 3rem;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.stat .label {
+  color: #888;
+  font-size: 0.8rem;
+}
+.stat .val {
+  color: #fff;
+  font-size: 2rem;
+  font-weight: bold;
+}
+
+.spectating-text {
+  color: #fff;
+  letter-spacing: 2px;
+  margin-bottom: 1rem;
+  animation: pulse 2s infinite;
+}
+.arena-death-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+}
+
+/* TOP RIGHT HUD */
+.top-right-rank-hud {
+  position: absolute;
+  top: 90px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* Align right */
+  z-index: 100;
+  pointer-events: none;
+}
+
+.rank-display-hud {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #ffd700;
+  text-shadow: 0 0 10px #ffd700;
+  line-height: 1;
+}
+
+.rank-label {
+  font-size: 1rem;
+  color: #fff;
+  letter-spacing: 2px;
+  margin-right: 5px; /* Right margin for alignment */
+}
+
+/* DEATH CARD UI */
+.death-card {
+  background: rgba(10, 10, 20, 0.9);
+  border: 2px solid #ff3333;
+  border-radius: 20px;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 0 0 50px rgba(255, 0, 0, 0.2);
+  min-width: 400px;
+  animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.killer-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.killer-name {
+  font-size: 2rem;
+  font-weight: 900;
+  color: #ff3333;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+}
+
+.killer-hero {
+  font-size: 1rem;
+  color: #00f3ff;
+  letter-spacing: 2px;
+}
+
+.death-stats {
+  width: 100%; /* Ensure full width for inner centering */
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center children */
+}
+
+.rank-section {
+  width: 100%; /* Full width to allow rank-display centering */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.rank-display {
+  font-size: 4rem; /* Bigger for emphasis */
+  font-weight: 900;
+  color: #ffd700; /* Gold */
+  margin: 20px 0;
+  text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+  display: flex; /* Flexbox for centering */
+  justify-content: center; /* Center horizontally */
+  align-items: center; /* Center vertically */
+  width: 100%; /* Full width */
+  gap: 15px; /* Spacing between #, Rank, Total */
+  text-align: center;
+}
+
+.rank-hash {
+  font-size: 2rem;
+  color: #888;
+}
+
+.rank-total {
+  font-size: 1.5rem;
+  color: #666;
+}
+
+.death-actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 20px;
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-spectate,
+.btn-return {
+  padding: 15px 30px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+
+.btn-spectate {
+  background: transparent;
+  border: 2px solid #00f3ff;
+  color: #00f3ff;
+}
+
+.btn-spectate:hover {
+  background: rgba(0, 243, 255, 0.1);
+  box-shadow: 0 0 15px #00f3ff;
+}
+
+.btn-return {
+  background: #ff3333;
+  border: 2px solid #ff3333;
+  color: #fff;
+}
+
+/* MATCHMAKING UI */
+.radar-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  border: 2px solid rgba(0, 243, 255, 0.2);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 90;
+}
+
+.radar-grid {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(
+      circle,
+      transparent 60%,
+      rgba(0, 243, 255, 0.1) 60%,
+      rgba(0, 243, 255, 0.1) 61%,
+      transparent 61%
+    ),
+    linear-gradient(rgba(0, 243, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 243, 255, 0.1) 1px, transparent 1px);
+  background-size: 100% 100%, 50px 50px, 50px 50px;
+}
+
+.radar-sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(0, 243, 255, 0.4) 30deg,
+    transparent 30deg
+  );
+  animation: radarSpin 4s linear infinite;
+}
+
+@keyframes radarSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mm-content {
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.85); /* Darker backdrop for text */
+  padding: 40px;
+  border: 1px solid #00f3ff;
+  box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
+  border-radius: 10px;
+}
+
+.mm-stats {
+  margin-top: 20px;
+  width: 100%;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  width: 300px;
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 5px;
+}
+
+.stat-row .label {
+  color: #888;
+}
+
+.stat-row .value {
+  color: #00f3ff;
+  font-weight: bold;
+}
+
+.status-blink {
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.mm-tips {
+  margin-top: 30px;
+  font-size: 1rem;
+  color: #ccc;
+  font-style: italic;
+  max-width: 400px;
+  text-align: center;
+}
+
+.tip-label {
+  color: #ffd700;
+  font-weight: bold;
+  margin-right: 5px;
+}
+
+.arena-respawn-box {
+  width: 100%;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 15px 0;
+  text-align: center;
+}
+
+.respawn-timer {
+  font-size: 5rem;
+  color: #fff;
+  font-weight: bold;
+  text-shadow: 0 0 10px #fff;
+  margin-bottom: 10px;
+  line-height: 1;
+  text-align: center;
+  width: 100%;
+  display: block;
 }
 </style>

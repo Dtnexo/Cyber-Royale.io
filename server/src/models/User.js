@@ -37,6 +37,10 @@ const User = sequelize.define("User", {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },
+  brWins: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
 });
 
 User.beforeCreate(async (user) => {

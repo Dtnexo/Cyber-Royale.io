@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
 import { useRouter } from "vue-router";
@@ -7,6 +7,7 @@ import { useRouter } from "vue-router";
 const auth = useAuthStore();
 const game = useGameStore();
 const router = useRouter();
+const selectedMode = ref("arena");
 
 onMounted(async () => {
   const success = await auth.fetchProfile();
@@ -29,7 +30,7 @@ const handleBuy = async (heroId) => {
 
 const startGame = () => {
   if (game.selectedHeroId) {
-    router.push("/play");
+    router.push({ path: "/play", query: { mode: selectedMode.value } });
   }
 };
 
@@ -133,6 +134,26 @@ const retryConnection = async () => {
                 SELECT HERO
               </button>
             </div>
+          </div>
+
+          <!-- Mode Selection -->
+          <div class="mode-selector">
+            <button
+              class="mode-btn"
+              :class="{ active: selectedMode === 'arena' }"
+              @click="selectedMode = 'arena'"
+            >
+              ARENA
+              <span class="sub">FFA DEATHMATCH</span>
+            </button>
+            <button
+              class="mode-btn"
+              :class="{ active: selectedMode === 'battle_royale' }"
+              @click="selectedMode = 'battle_royale'"
+            >
+              BATTLE ROYALE
+              <span class="sub">14-PLAYER SURVIVAL</span>
+            </button>
           </div>
 
           <!-- Action Buttons -->
@@ -556,5 +577,53 @@ const retryConnection = async () => {
     padding: 1rem;
     width: 100%;
   }
+}
+.mode-selector {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+}
+
+.mode-btn {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid #333;
+  color: #888;
+  padding: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-transform: uppercase;
+  font-weight: bold;
+  letter-spacing: 1px;
+  transition: all 0.3s ease;
+  clip-path: polygon(
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%,
+    0 10px
+  );
+}
+
+.mode-btn:hover {
+  background: rgba(0, 255, 255, 0.1);
+  color: #fff;
+  border-color: #555;
+}
+
+.mode-btn.active {
+  background: rgba(0, 255, 255, 0.2);
+  border-color: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+}
+
+.mode-btn .sub {
+  display: block;
+  font-size: 0.7rem;
+  margin-top: 0.3rem;
+  color: var(--primary);
+  opacity: 0.8;
 }
 </style>

@@ -1,6 +1,7 @@
 const Player = require("./Player");
 const { Hero, User } = require("../models");
 const MapData = require("./MapData");
+const BattleRoyaleManager = require("./BattleRoyaleManager");
 const jwt = require("jsonwebtoken");
 
 class GameServer {
@@ -11,190 +12,230 @@ class GameServer {
     this.projectiles = [];
     this.entities = []; // Mines, etc.
     this.disconnectedPlayers = new Map(); // Store { username, player, timeout }
+    this.brManager = new BattleRoyaleManager(io, this);
 
     this.io.on("connection", (socket) => {
       console.log("Player connected:", socket.id);
 
-      socket.on("join_game", async ({ heroId, username, skinColor, token }) => {
-        // SECURITY: Verify Token to prevent Username Spoofing via LocalStorage
-        if (token) {
+      socket.on(
+        "join_game",
+        async ({ heroId, username, skinColor, token, mode }) => {
+          // Mode Selection
+
+          // SECURITY: Verify Token to prevent Username Spoofing via LocalStorage
+          if (token) {
+            try {
+              // DEBUG LOGGING
+              // console.log("Verifying token:", token.substring(0, 10) + "...");
+              const decoded = jwt.verify(
+                token,
+                process.env.JWT_SECRET || "default_secret_key"
+              );
+
+              if (decoded && decoded.id) {
+                // Token contains { id: ... } (See auth.js)
+                // We must fetch the User to get the Username
+                const dbUser = await User.findByPk(decoded.id);
+                if (dbUser) {
+                  username = dbUser.username;
+                  console.log(`[AUTH] Verified user via Token ID: ${username}`);
+                } else {
+                  console.warn(
+                    "[AUTH] Token valid but user ID not found in DB"
+                  );
+                  username = "Unknown";
+                }
+              } else if (decoded && decoded.username) {
+                // Fallback for legacy tokens if any
+                username = decoded.username;
+              }
+            } catch (err) {
+              console.warn(
+                `[AUTH] Invalid Token for ${socket.id}: ${err.message}`
+              );
+              username = "Unknown"; // Force Guest
+            }
+          } else {
+            username = "Unknown"; // No Token = Guest
+          }
+
+          // SECURITY: Prevent Hero Switching while active
+          // SECURITY: Prevent Hero Switching while active
+          if (this.players.has(socket.id)) {
+            return;
+          }
+
+          // Fetch hero stats from DB
           try {
-            // DEBUG LOGGING
-            // console.log("Verifying token:", token.substring(0, 10) + "...");
-            const decoded = jwt.verify(
-              token,
-              process.env.JWT_SECRET || "default_secret_key"
-            );
+            let hero = await Hero.findByPk(heroId);
 
-            if (decoded && decoded.id) {
-              // Token contains { id: ... } (See auth.js)
-              // We must fetch the User to get the Username
-              const dbUser = await User.findByPk(decoded.id);
-              if (dbUser) {
-                username = dbUser.username;
-                console.log(`[AUTH] Verified user via Token ID: ${username}`);
-              } else {
-                console.warn("[AUTH] Token valid but user ID not found in DB");
-                username = "Unknown";
-              }
-            } else if (decoded && decoded.username) {
-              // Fallback for legacy tokens if any
-              username = decoded.username;
-            }
-          } catch (err) {
-            console.warn(
-              `[AUTH] Invalid Token for ${socket.id}: ${err.message}`
-            );
-            username = "Unknown"; // Force Guest
-          }
-        } else {
-          username = "Unknown"; // No Token = Guest
-        }
+            // SECURITY: Verify Ownership (Strict)
+            let isAllowed = false;
+            let user = null; // Declare in wider scope
 
-        // SECURITY: Prevent Hero Switching while active
-        // SECURITY: Prevent Hero Switching while active
-        if (this.players.has(socket.id)) {
-          return;
-        }
+            if (hero && hero.price === 0) {
+              isAllowed = true; // Free heroes are always allowed
+            } else if (hero && username && username !== "Unknown") {
+              user = await User.findOne({
+                where: { username },
+                include: [{ model: Hero, as: "unlockedHeroes" }],
+              });
 
-        // Fetch hero stats from DB
-        try {
-          let hero = await Hero.findByPk(heroId);
-
-          // SECURITY: Verify Ownership (Strict)
-          let isAllowed = false;
-          let user = null; // Declare in wider scope
-
-          if (hero && hero.price === 0) {
-            isAllowed = true; // Free heroes are always allowed
-          } else if (hero && username && username !== "Unknown") {
-            user = await User.findOne({
-              where: { username },
-              include: [{ model: Hero, as: "unlockedHeroes" }],
-            });
-
-            if (user) {
-              // Check if user actually owns this paid hero
-              if (user.unlockedHeroes.some((h) => h.id === hero.id)) {
-                isAllowed = true;
-              }
-            }
-          }
-
-          if (hero && !isAllowed) {
-            console.warn(
-              `[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`
-            );
-
-            // Fallback Logic: Try "Previous/Equipped" Hero
-            let fallbackHeroId = 1; // Default
-            if (user && user.equippedHeroId) {
-              // Verify user owns their equipped hero too (sanity check)
-              if (!user.unlockedHeroes) {
-                // Re-check if needed, but we have it from include above
-                // Should be loaded
-              }
-              // Check if equippedHeroId is valid owned hero
-              if (
-                user.unlockedHeroes.some((h) => h.id === user.equippedHeroId)
-              ) {
-                fallbackHeroId = user.equippedHeroId;
-                console.log(
-                  `[SECURITY] Reverting to Last Equipped Valid Hero (ID: ${fallbackHeroId})`
-                );
+              if (user) {
+                // Check if user actually owns this paid hero
+                if (user.unlockedHeroes.some((h) => h.id === hero.id)) {
+                  isAllowed = true;
+                }
               }
             }
 
-            hero = await Hero.findByPk(fallbackHeroId);
-            if (!hero) hero = await Hero.findOne({ where: { price: 0 } });
-          }
+            if (hero && !isAllowed) {
+              console.warn(
+                `[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`
+              );
 
-          if (hero) {
-            // Check Reconnection
-            let restored = false;
-            if (username && username !== "Unknown") {
-              const saved = this.disconnectedPlayers.get(username);
-              // Check if same Hero (Use verified hero.id)
-              if (saved && saved.player.hero.id == hero.id) {
-                // Restore State
-                clearTimeout(saved.timeout);
-                this.disconnectedPlayers.delete(username);
-
-                const p = saved.player;
-                const oldId = p.id; // Capture old ID
-                p.id = socket.id; // Update Socket ID
-                p.keys = {
-                  w: false,
-                  a: false,
-                  s: false,
-                  d: false,
-                  space: false,
-                }; // Reset inputs
-
-                // Transfer ownership of Mines/Projectiles
-                this.entities.forEach((ent) => {
-                  if (ent.ownerId === oldId) ent.ownerId = socket.id;
-                });
-                this.projectiles.forEach((proj) => {
-                  if (proj.ownerId === oldId) proj.ownerId = socket.id;
-                });
-
-                this.players.set(socket.id, p);
-                restored = true;
-                console.log(`Restored session for ${username}`);
-              }
-            }
-
-            if (!restored) {
-              // UNIQUE USERNAME CHECK (Security)
-              // Iterate existing players to find duplicates
-              for (const [pid, p] of this.players) {
-                if (p.username === username) {
-                  // Found a duplicate! Kick the OLD active player.
-                  // This prevents "stuck" names and allows the user to re-login.
-                  const oldSocket = this.io.sockets.sockets.get(pid);
-                  if (oldSocket) {
-                    oldSocket.emit(
-                      "error_message",
-                      "Logged in from another location."
-                    );
-                    oldSocket.disconnect(true);
-                  }
-                  this.players.delete(pid);
+              // Fallback Logic: Try "Previous/Equipped" Hero
+              let fallbackHeroId = 1; // Default
+              if (user && user.equippedHeroId) {
+                // Verify user owns their equipped hero too (sanity check)
+                if (!user.unlockedHeroes) {
+                  // Re-check if needed, but we have it from include above
+                  // Should be loaded
+                }
+                // Check if equippedHeroId is valid owned hero
+                if (
+                  user.unlockedHeroes.some((h) => h.id === user.equippedHeroId)
+                ) {
+                  fallbackHeroId = user.equippedHeroId;
+                  console.log(
+                    `[SECURITY] Reverting to Last Equipped Valid Hero (ID: ${fallbackHeroId})`
+                  );
                 }
               }
 
-              this.players.set(
-                socket.id,
-                new Player(socket.id, hero.toJSON(), username, skinColor)
-              );
-              const player = this.players.get(socket.id);
-              const spawn = this.getSafeSpawn();
-              player.x = spawn.x;
-              player.y = spawn.y;
+              hero = await Hero.findByPk(fallbackHeroId);
+              if (!hero) hero = await Hero.findOne({ where: { price: 0 } });
             }
 
-            socket.join("game_room");
-            // Send initial Game State AND Map Data
-            socket.emit("game_init", {
-              map: MapData,
-              playerId: socket.id,
-            });
+            if (hero) {
+              // Battle Royale Join
+              if (mode === "battle_royale") {
+                this.brManager.joinQueue(socket, {
+                  id: socket.id,
+                  hero: hero.toJSON(),
+                  username,
+                  skinColor,
+                });
+                return; // Stop here, don't join Arena
+              }
+
+              // Check Reconnection
+              let restored = false;
+              if (username && username !== "Unknown") {
+                const saved = this.disconnectedPlayers.get(username);
+                // Check if same Hero (Use verified hero.id)
+                if (saved && saved.player.hero.id == hero.id) {
+                  // Restore State
+                  clearTimeout(saved.timeout);
+                  this.disconnectedPlayers.delete(username);
+
+                  const p = saved.player;
+                  const oldId = p.id; // Capture old ID
+                  p.id = socket.id; // Update Socket ID
+                  p.keys = {
+                    w: false,
+                    a: false,
+                    s: false,
+                    d: false,
+                    space: false,
+                  }; // Reset inputs
+
+                  // Transfer ownership of Mines/Projectiles
+                  this.entities.forEach((ent) => {
+                    if (ent.ownerId === oldId) ent.ownerId = socket.id;
+                  });
+                  this.projectiles.forEach((proj) => {
+                    if (proj.ownerId === oldId) proj.ownerId = socket.id;
+                  });
+
+                  this.players.set(socket.id, p);
+                  restored = true;
+                  console.log(`Restored session for ${username}`);
+                }
+              }
+
+              if (!restored) {
+                // UNIQUE USERNAME CHECK (Security)
+                // Iterate existing players to find duplicates
+                for (const [pid, p] of this.players) {
+                  if (p.username === username) {
+                    // Found a duplicate! Kick the OLD active player.
+                    // This prevents "stuck" names and allows the user to re-login.
+                    const oldSocket = this.io.sockets.sockets.get(pid);
+                    if (oldSocket) {
+                      oldSocket.emit(
+                        "error_message",
+                        "Logged in from another location."
+                      );
+                      oldSocket.disconnect(true);
+                    }
+                    this.players.delete(pid);
+                  }
+                }
+
+                const newPlayer = new Player(
+                  socket.id,
+                  hero.toJSON(),
+                  username,
+                  skinColor
+                );
+
+                // Set Arena Map Context
+                newPlayer.mapLimits = {
+                  width: MapData.width,
+                  height: MapData.height,
+                };
+                newPlayer.currentMapObstacles = MapData.obstacles;
+
+                this.players.set(socket.id, newPlayer);
+                const player = this.players.get(socket.id);
+                const spawn = this.getSafeSpawn();
+                player.x = spawn.x;
+                player.y = spawn.y;
+              }
+
+              socket.join("game_room");
+              // Send initial Game State AND Map Data
+              socket.emit("game_init", {
+                map: MapData,
+                playerId: socket.id,
+              });
+            }
+          } catch (e) {
+            console.error(e);
           }
-        } catch (e) {
-          console.error(e);
         }
-      });
+      );
 
       socket.on("client_input", (inputData) => {
+        // Check Arena
         const player = this.players.get(socket.id);
         if (player) {
           player.keys = inputData.keys;
           player.mouseAngle = inputData.mouseAngle;
+        } else {
+          // Check BR
+          this.brManager.handleInput(socket.id, inputData);
         }
       });
 
       socket.on("skill_trigger", () => {
+        // Check BR First (or Arena)
+        if (this.brManager.players.has(socket.id)) {
+          this.brManager.handleSkill(socket.id);
+          return;
+        }
+
         const player = this.players.get(socket.id);
         if (player) {
           const result = player.useSkill();
@@ -314,12 +355,16 @@ class GameServer {
       });
     });
 
+    // Start Loops
     this.startGameLoop();
   }
 
   startGameLoop() {
     setInterval(() => {
       const dt = 0.03; // 30ms
+
+      // Update Battle Royale
+      this.brManager.update(dt);
 
       const state = {
         players: [],
@@ -576,10 +621,27 @@ class GameServer {
         // Let's say Lava Wave blocked by walls for now unless requested.
 
         if (!p.penetrateWalls) {
+          // RESOLVE MAP CONTEXT
+          // Use the obstacles attached to the projectile (robust) OR default to Arena
+          let obstacles = p.obstacles || MapData.obstacles;
+
+          // Fallback: If absolutely no obstacles found, maybe Owner lookup?
+          // But p.obstacles should handle it.
+          // Force BR obstacles if position is clearly outside Arena > 1800
+          // (Safety for projectiles spawned before update or edge cases)
+          if (!p.obstacles && (p.x > 1800 || p.y > 1400)) {
+            // We need MapDataBR reference. We don't have it imported at top?
+            // Assuming owner check as last resort
+            const owner = this.players.get(p.ownerId);
+            if (owner && owner.currentMapObstacles) {
+              obstacles = owner.currentMapObstacles;
+            }
+          }
+
           // TECHNO MINE: Sticky Walls?
           // If friction is true (Mine), and hits wall -> Stick (Stop)
           if (p.friction) {
-            for (const obs of MapData.obstacles) {
+            for (const obs of obstacles) {
               if (
                 pRect.x < obs.x + obs.w &&
                 pRect.x + pRect.w > obs.x &&
@@ -595,7 +657,7 @@ class GameServer {
             }
           } else {
             // Normal Bullet / Lava
-            for (const obs of MapData.obstacles) {
+            for (const obs of obstacles) {
               if (
                 pRect.x < obs.x + obs.w &&
                 pRect.x + pRect.w > obs.x &&
@@ -696,6 +758,13 @@ class GameServer {
 
             // Apply Damage
             let damage = p.damage || 15;
+
+            // CORE SCALING (Arena Support if applicable)
+            const attacker = this.players.get(p.ownerId);
+            if (attacker) {
+              // +9 Damage per Core (User Request)
+              damage += (attacker.powerCores || 0) * 9;
+            }
 
             // HIT EFFECT
             this.io.emit("visual_effect", {

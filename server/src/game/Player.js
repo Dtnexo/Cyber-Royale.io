@@ -1,9 +1,9 @@
-const MapData = require("./MapData");
-
 class Player {
   constructor(id, heroData, username, customColor) {
     this.id = id;
     this.hero = heroData; // { id, name, stats: { hp, speed, cooldown } }
+    this.heroName = heroData.name;
+    this.heroClass = heroData.class;
     this.username = username || "Unknown"; // Store username
     this.x = 400; // Center
     this.y = 300;
@@ -38,6 +38,16 @@ class Player {
     this.rapidFire = false; // Fast shooting
     this.isSkillActive = false; // Visual Aura Flag
     this.freezeShotsActive = false; // Frost skill duration flag
+
+    // BATTLE ROYALE STATS
+    this.powerCores = 0; // Number of gems collected
+  }
+
+  addCore() {
+    this.powerCores++;
+    // SCALING: +120 HP (User Request), +9 Damage (Flat)
+    this.maxHp += 120;
+    this.hp += 120; // Heal on pickup
   }
 
   update(dt) {
@@ -61,7 +71,8 @@ class Player {
       let colX = false;
       if (!this.isPhasing) {
         const pRect = { x: nextX - 20, y: this.y - 20, w: 40, h: 40 };
-        for (const obs of MapData.obstacles) {
+        const obstacles = this.currentMapObstacles || [];
+        for (const obs of obstacles) {
           if (
             pRect.x < obs.x + obs.w &&
             pRect.x + pRect.w > obs.x &&
@@ -86,7 +97,8 @@ class Player {
       let colY = false;
       if (!this.isPhasing) {
         const pRect = { x: this.x - 20, y: nextY - 20, w: 40, h: 40 };
-        for (const obs of MapData.obstacles) {
+        const obstacles = this.currentMapObstacles || [];
+        for (const obs of obstacles) {
           if (
             pRect.x < obs.x + obs.w &&
             pRect.x + pRect.w > obs.x &&
@@ -102,8 +114,9 @@ class Player {
     }
 
     // Clamp to map
-    this.x = Math.max(0, Math.min(MapData.width, this.x));
-    this.y = Math.max(0, Math.min(MapData.height, this.y));
+    const limits = this.mapLimits || { width: 1600, height: 1200 }; // Default to Arena
+    this.x = Math.max(0, Math.min(limits.width, this.x));
+    this.y = Math.max(0, Math.min(limits.height, this.y));
   }
 
   shoot() {
@@ -134,6 +147,35 @@ class Player {
       type: this.minesActive ? "MINE_PROJ" : "PROJECTILE",
       friction: this.minesActive ? true : false, // Logic flag for friction
       life: this.minesActive ? 12000 : 2000,
+    };
+  }
+
+  createProjectile(
+    x,
+    y,
+    angle,
+    speed,
+    life,
+    damage,
+    color,
+    radius,
+    type,
+    friction = false
+  ) {
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      ownerId: this.id,
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: life,
+      maxLife: life,
+      damage: damage,
+      color: color,
+      radius: radius || 10,
+      type: type || "PROJECTILE",
+      friction: friction,
     };
   }
 
@@ -287,19 +329,20 @@ class Player {
       const fanAngle = 0.3; // Spread
       for (let i = -1; i <= 1; i++) {
         const angle = this.mouseAngle + i * fanAngle;
-        projs.push({
-          type: "LAVA_WAVE",
-          id: Math.random().toString(36).substr(2, 9),
-          x: this.x,
-          y: this.y,
-          vx: Math.cos(angle) * 700,
-          vy: Math.sin(angle) * 700,
-          ownerId: this.id,
-          damage: 80,
-          life: 1500, // Short range wave
-          maxLife: 1500, // For Scaling
-          penetrateEnemies: true,
-        });
+        projs.push(
+          this.createProjectile(
+            this.x,
+            this.y,
+            angle,
+            700, // speed
+            1500, // life
+            80, // damage
+            "#ff4500", // color (example for lava)
+            10, // radius
+            "LAVA_WAVE",
+            true // penetrateEnemies (handled by type in server)
+          )
+        );
       }
       result = projs;
     } else if (name === "Storm") {
@@ -308,17 +351,19 @@ class Player {
       const projs = [];
       for (let i = 0; i < 16; i++) {
         const angle = (i / 16) * Math.PI * 2;
-        projs.push({
-          type: "PROJECTILE",
-          id: Math.random().toString(36).substr(2, 9),
-          x: this.x,
-          y: this.y,
-          vx: Math.cos(angle) * 800, // Faster
-          vy: Math.sin(angle) * 800,
-          ownerId: this.id,
-          color: "#ffff00",
-          life: 1000,
-        });
+        projs.push(
+          this.createProjectile(
+            this.x,
+            this.y,
+            angle,
+            800, // Speed
+            1000, // Life
+            25, // Damage (Buffed)
+            "#ffff00", // Color
+            8, // Radius
+            "PROJECTILE" // Type
+          )
+        );
       }
       result = projs;
     } else if (name === "Viper") {
@@ -360,8 +405,8 @@ class Player {
 
       // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
       // ... (Simplified check: Clamp to map)
-      this.x = Math.max(0, Math.min(MapData.width, targetX));
-      this.y = Math.max(0, Math.min(MapData.height, targetY));
+      this.x = Math.max(0, Math.min(4000, targetX));
+      this.y = Math.max(0, Math.min(4000, targetY));
     }
 
     // === SUPPORT ===
@@ -378,22 +423,37 @@ class Player {
       // result = ... REMOVED Drop Mine
       result = null; // No immediate effect, just buff
     } else if (name === "Engineer") {
-      this.cooldowns.skill += 5000;
-      duration = 5000;
-      // Force Field Wall
-      const wx = this.x + Math.cos(this.mouseAngle) * 50;
-      const wy = this.y + Math.sin(this.mouseAngle) * 50;
+      this.cooldowns.skill += 10000; // 10s Cooldown
+      duration = 8000; // 8s Duration (User Request)
+      // Force Field Wall - Protective (Perpendicular to Aim)
+      const dist = 60;
+      const wx = this.x + Math.cos(this.mouseAngle) * dist;
+      const wy = this.y + Math.sin(this.mouseAngle) * dist;
 
-      // Fix: Ensure object is returned correctly
+      // Base Size
+      const baseW = 80;
+      const baseH = 20;
+
+      // Perpendicular Angle (90 degrees offset)
+      const wallAngle = this.mouseAngle + Math.PI / 2;
+
+      // Calculate AABB for Server Collision using NEW angle
+      const absCos = Math.abs(Math.cos(wallAngle));
+      const absSin = Math.abs(Math.sin(wallAngle));
+      const aabbW = baseW * absCos + baseH * absSin;
+      const aabbH = baseW * absSin + baseH * absCos;
+
       result = {
         type: "WALL_TEMP",
         ownerId: this.id,
-        x: wx - 40,
-        y: wy - 10,
-        w: 80,
-        h: 20,
-        life: 5000,
-        angle: this.mouseAngle, // Just store, server uses AABB so angle visual only
+        x: wx - aabbW / 2,
+        y: wy - aabbH / 2,
+        w: aabbW,
+        h: aabbH,
+        baseW: baseW,
+        baseH: baseH,
+        life: 8000,
+        angle: wallAngle,
       };
     } else if (name === "Medic") {
       duration = 500;
@@ -420,7 +480,10 @@ class Player {
     let collided = false;
     const pRect = { x: this.x - 20, y: this.y - 20, w: 40, h: 40 };
 
-    for (const obs of MapData.obstacles) {
+    // Need obstacles from GameServer context
+    const obstacles = this.currentMapObstacles || [];
+
+    for (const obs of obstacles) {
       if (
         pRect.x < obs.x + obs.w &&
         pRect.x + pRect.w > obs.x &&
@@ -456,7 +519,8 @@ class Player {
       const testRect = { x: testX - 20, y: testY - 20, w: 40, h: 40 };
       let safe = true;
 
-      for (const obs of MapData.obstacles) {
+      const obstacles = this.currentMapObstacles || [];
+      for (const obs of obstacles) {
         if (
           testRect.x < obs.x + obs.w &&
           testRect.x + testRect.w > obs.x &&

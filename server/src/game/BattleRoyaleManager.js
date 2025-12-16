@@ -1,0 +1,687 @@
+const MapDataBR = require("./MapDataBR");
+const { User } = require("../models");
+
+class BattleRoyaleManager {
+  constructor(io, gameServer) {
+    this.io = io;
+    this.gameServer = gameServer;
+    this.queue = [];
+    this.players = new Map(); // Map<socketId, PlayerInstance>
+    this.projectiles = [];
+    this.entities = []; // Mines, etc.
+    this.state = "waiting"; // waiting, countdown, active, ended
+    this.zone = { x: 2000, y: 2000, radius: 3000 };
+    this.crates = [];
+    this.items = []; // Dropped Cores {x, y, value, id}
+    this.MAX_PLAYERS = 14;
+    this.MIN_PLAYERS_TO_START = 2; // Testing
+    this.QUEUE_TIMEOUT = 60000;
+    this.queueTimer = null;
+    this.startTime = 0;
+  }
+
+  joinQueue(socket, playerData) {
+    if (this.state !== "waiting") {
+      socket.emit("error_message", "Match in progress.");
+      return;
+    }
+    // Check dupe socket
+    if (this.queue.find((q) => q.socket.id === socket.id)) return;
+
+    // UNIQUE USERNAME ENFORCEMENT (Strict Single Session)
+    // If user acts again, remove previous entry (handle refresh)
+    const username = playerData.username || "Guest";
+    const existingIdx = this.queue.findIndex(
+      (q) => q.playerData.username === username
+    );
+
+    if (existingIdx !== -1) {
+      // Notify and Remove old
+      const oldSocket = this.queue[existingIdx].socket;
+      oldSocket.emit(
+        "error_message",
+        "New session started. Removed from queue."
+      );
+      this.queue.splice(existingIdx, 1);
+    }
+
+    // No renaming, just use the name
+    playerData.username = username;
+
+    this.queue.push({ socket, playerData });
+    socket.join("br_lobby");
+
+    this.io.to("br_lobby").emit("queue_update", {
+      count: this.queue.length,
+      max: this.MAX_PLAYERS,
+    });
+
+    if (this.queue.length === this.MIN_PLAYERS_TO_START) this.startQueueTimer();
+    if (this.queue.length >= this.MAX_PLAYERS) this.startCountdown();
+  }
+
+  startQueueTimer() {
+    clearTimeout(this.queueTimer);
+    let timeLeft = 30; // 30s wait
+
+    this.queueTimer = setInterval(() => {
+      // Abort if players left
+      if (this.queue.length < this.MIN_PLAYERS_TO_START) {
+        clearInterval(this.queueTimer);
+        this.queueTimer = null;
+        this.io.to("br_lobby").emit("queue_status", "Waiting for players...");
+        return;
+      }
+
+      timeLeft--;
+      // Always broadcast timer (since we are above min players)
+      this.io.to("br_lobby").emit("queue_timer", timeLeft);
+
+      if (timeLeft <= 0) {
+        clearInterval(this.queueTimer);
+        if (this.queue.length >= this.MIN_PLAYERS_TO_START) {
+          this.startCountdown();
+        } else {
+          this.io
+            .to("br_lobby")
+            .emit("queue_status", "Not enough players, retrying...");
+          this.startQueueTimer(); // Reset
+        }
+      }
+    }, 1000);
+  }
+
+  startCountdown() {
+    clearInterval(this.queueTimer);
+    this.state = "countdown";
+    let count = 3;
+
+    this.players.clear();
+
+    // HOT RELOAD MAP DATA
+    // We clear the cache so edits to MapDataBR.js apply immediately without server restart.
+    try {
+      const mapPath = require.resolve("./MapDataBR");
+      delete require.cache[mapPath];
+    } catch (e) {
+      console.log("Could not clear map cache", e);
+    }
+    const MapData = require("./MapDataBR");
+
+    this.crates = JSON.parse(JSON.stringify(MapData.crates));
+    this.items = [];
+    this.projectiles = [];
+    this.entities = [];
+    this.zone = { x: 2000, y: 2000, radius: 3200 }; // Starts slightly larger
+    this.matchTime = 0;
+
+    // Shuffle Spawns
+    const spawns = [...MapData.spawns].sort(() => Math.random() - 0.5);
+
+    const Player = require("./Player");
+    this.queue.forEach(({ socket, playerData }, index) => {
+      const p = new Player(
+        socket.id,
+        playerData.hero,
+        playerData.username,
+        playerData.skinColor
+      );
+
+      // Assign Spawn
+      if (index < spawns.length) {
+        p.x = spawns[index].x;
+        p.y = spawns[index].y;
+      } else {
+        // Fallback random if more players than spawns (unlikely with 14 cap)
+        p.x = 200 + Math.random() * 3600;
+        p.y = 200 + Math.random() * 3600;
+      }
+
+      p.alive = true;
+      const MapDataBR = require("./MapDataBR");
+
+      this.players.set(socket.id, p);
+
+      // Inject Map Context
+      p.mapLimits = { width: MapDataBR.width, height: MapDataBR.height };
+      p.currentMapObstacles = MapDataBR.obstacles;
+
+      socket.emit("br_start", {
+        map: MapDataBR,
+        zone: this.zone,
+        playerId: socket.id,
+        pos: { x: p.x, y: p.y },
+        color: p.color,
+        hp: p.hp,
+        maxHp: p.maxHp,
+        heroClass: p.heroClass,
+      });
+    });
+    this.queue = [];
+
+    const intv = setInterval(() => {
+      this.io.to("br_lobby").emit("br_countdown", count);
+      count--;
+      if (count < 0) {
+        clearInterval(intv);
+        this.startMatch();
+      }
+    }, 1000);
+  }
+
+  startMatch() {
+    this.state = "active";
+    this.matchTime = 0;
+    this.io.to("br_lobby").emit("br_countdown", 0); // GO!
+    console.log("[BR] Active!");
+  }
+
+  handleInput(socketId, inputData) {
+    if (this.state !== "active") return;
+    const p = this.players.get(socketId);
+    if (p && p.alive) {
+      p.keys = inputData.keys;
+      p.mouseAngle = inputData.mouseAngle;
+    }
+  }
+
+  handleSkill(socketId) {
+    if (this.state !== "active") return;
+    const p = this.players.get(socketId);
+    if (p && p.alive) {
+      const result = p.useSkill();
+      if (result) {
+        const results = Array.isArray(result) ? result : [result];
+        results.forEach((item) => this.addEntityOrProjectile(item));
+      }
+    }
+  }
+
+  addEntityOrProjectile(item) {
+    if (
+      item.type === "PROJECTILE" ||
+      item.type === "LAVA_WAVE" ||
+      item.type === "MINE_PROJ"
+    ) {
+      this.projectiles.push(item);
+    } else if (item.type === "SHOCKWAVE") {
+      // NOVA: Immediate AoE Effect
+      this.io.to("br_lobby").emit("visual_effect", {
+        type: "shockwave",
+        x: item.x,
+        y: item.y,
+        radius: item.radius,
+        color: item.color,
+      });
+
+      // Apply Physics/Damage to other players
+      for (const [pid, p] of this.players) {
+        if (pid === item.ownerId) continue;
+        if (p.alive === false) continue;
+
+        const dx = p.x - item.x;
+        const dy = p.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < item.radius) {
+          // Knockback
+          const angle = Math.atan2(dy, dx);
+          const force = item.knockback;
+
+          let nx = p.x + Math.cos(angle) * force;
+          let ny = p.y + Math.sin(angle) * force;
+
+          // Clamp
+          nx = Math.max(0, Math.min(4000, nx));
+          ny = Math.max(0, Math.min(4000, ny));
+
+          p.x = nx;
+          p.y = ny;
+
+          // Damage
+          p.hp -= item.damage;
+          // BR Death is handled in update loop
+        }
+      }
+    } else if (item.type === "SUPERNOVA_CHARGE") {
+      // NOVA: Mark start time on player for delayed explosion
+      const p = this.players.get(item.ownerId);
+      if (p) {
+        p.supernovaStartTime = Date.now();
+        // Visual Charge
+        this.io.to("br_lobby").emit("visual_effect", {
+          type: "supernova_cast",
+          x: item.x,
+          y: item.y,
+        });
+      }
+    } else {
+      this.entities.push(item);
+      if (item.life) {
+        setTimeout(() => {
+          const idx = this.entities.indexOf(item);
+          if (idx > -1) this.entities.splice(idx, 1);
+        }, item.life);
+      }
+    }
+  }
+
+  update(dt) {
+    if (this.state !== "active") return;
+
+    this.matchTime += dt;
+
+    // ZONE (Delayed 30s)
+    if (this.matchTime > 30) {
+      if (this.zone.radius > 200) {
+        this.zone.radius -= 20 * dt; // Slow shrink
+      }
+    }
+
+    // UPDATE PLAYERS & SUPERNOVA
+    this.players.forEach((p) => {
+      if (!p.alive) return;
+
+      // SUPERNOVA LOGIC
+      if (p.supernovaStartTime) {
+        if (Date.now() - p.supernovaStartTime >= 500) {
+          delete p.supernovaStartTime;
+          p.cooldowns.skill = 8000; // Reset Cooldown
+
+          const blastRadius = 400;
+          // Visual
+          this.io.to("br_lobby").emit("visual_effect", {
+            type: "supernova_blast",
+            x: p.x,
+            y: p.y,
+            radius: blastRadius,
+          });
+
+          // Damage
+          this.players.forEach((target) => {
+            if (target.id === p.id || !target.alive) return;
+            const dx = target.x - p.x;
+            const dy = target.y - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < blastRadius) {
+              // Scaled Damage
+              let dmg = 0;
+              if (dist < 80) dmg = 9999; // One Shot
+              else {
+                const maxD = 120,
+                  minD = 30;
+                const ratio = (dist - 80) / (blastRadius - 80);
+                dmg = maxD - Math.max(0, Math.min(1, ratio)) * (maxD - minD);
+              }
+              target.hp -= dmg;
+
+              // Knockback
+              const angle = Math.atan2(dy, dx);
+              const force = 1000 * (1 - dist / blastRadius) + 200;
+              target.x += Math.cos(angle) * force;
+              target.y += Math.sin(angle) * force;
+            }
+          });
+        }
+      }
+    });
+
+    const statePack = {
+      players: [],
+      projectiles: this.projectiles,
+      entities: this.entities,
+      items: this.items,
+      crates: this.crates,
+      zone: this.zone,
+      aliveCount: 0,
+    };
+
+    // PLAYERS
+    this.players.forEach((p) => {
+      // Send Dead Players only if they just died or are spectating?
+      // Actually we send all players generally, client filters visuals.
+
+      if (!p.alive && !p.spectating) {
+        // Optimization: Could stop sending very old dead players
+      }
+
+      if (p.alive) {
+        p.update(dt);
+
+        // Zone Damage
+        const dx = p.x - this.zone.x;
+        const dy = p.y - this.zone.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > this.zone.radius) {
+          p.hp -= 50 * dt; // Zone Logic
+        }
+
+        // Shoot
+        if (p.keys.space) {
+          const proj = p.shoot();
+          if (proj) this.addEntityOrProjectile(proj);
+        }
+
+        // Death Check (Zone or DoT)
+        if (p.hp <= 0) {
+          this.killPlayer(p, null);
+        }
+
+        // Item Pickup
+        for (let i = this.items.length - 1; i >= 0; i--) {
+          const item = this.items[i];
+          const idx = p.x - item.x;
+          const idy = p.y - item.y;
+          if (Math.sqrt(idx * idx + idy * idy) < 40) {
+            p.addCore(); // +Stats
+            this.items.splice(i, 1);
+          }
+        }
+      }
+
+      statePack.players.push({
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        hp: p.hp,
+        maxHp: p.maxHp,
+        hero: p.hero.name,
+        heroClass: p.hero.class,
+        angle: p.mouseAngle,
+        isDead: !p.alive,
+        powerCores: p.powerCores,
+        username: p.username,
+        color: p.color,
+        shield: p.shieldActive,
+        invisible: p.isInvisible,
+        isFrozen: p.isFrozen,
+        isPoisoned: p.isPoisoned,
+        isSkillActive: p.isSkillActive,
+        skillCD: p.cooldowns.skill,
+        shootCD: p.cooldowns.shoot, // Exposure for UI/Visuals
+        maxSkillCD: p.hero.stats.cooldown,
+      });
+    });
+
+    // Calc Alive
+    let alive = 0;
+    this.players.forEach((p) => {
+      if (p.alive) alive++;
+    });
+    statePack.aliveCount = alive;
+
+    // PROJECTILES
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.projectiles[i];
+      proj.x += proj.vx * dt;
+      proj.y += proj.vy * dt;
+      proj.life -= dt * 1000;
+
+      if (proj.life <= 0) {
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      // WALL COLLISION
+      // Optimization: Require at top if possible, but for hot-reload safety we keep it here or move it.
+      // Let's rely on global or cached.
+      let wallHit = false;
+      const obstacles = require("./MapDataBR").obstacles;
+
+      const pRect = { x: proj.x, y: proj.y, w: 10, h: 10 }; // Approx
+
+      for (const obs of obstacles) {
+        // STANDARD AABB
+        if (
+          proj.x < obs.x + obs.w &&
+          proj.x + 10 > obs.x &&
+          proj.y < obs.y + obs.h &&
+          proj.y + 10 > obs.y
+        ) {
+          wallHit = true;
+          break;
+        }
+      }
+
+      if (wallHit) {
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      let hit = false;
+      // CRATE COLLISION
+      for (let c = this.crates.length - 1; c >= 0; c--) {
+        const crate = this.crates[c];
+        if (
+          crate.active &&
+          proj.x > crate.x &&
+          proj.x < crate.x + crate.w &&
+          proj.y > crate.y &&
+          proj.y < crate.y + crate.h
+        ) {
+          crate.hp -= proj.damage || 20;
+          hit = true;
+
+          if (crate.hp <= 0) {
+            crate.active = false; // "Destroyed" visually
+            // Drop Core
+            this.items.push({ x: crate.x + 30, y: crate.y + 30 });
+            this.crates.splice(c, 1); // Remove for now or mark dead
+          }
+          break;
+        }
+      }
+
+      if (hit) {
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      // ENTITY COLLISION (Engineer Walls - BOUNCE)
+      let entityHit = false;
+      for (const ent of this.entities) {
+        if (ent.type === "WALL_TEMP") {
+          // Check AABB Collision primarily
+          if (
+            proj.x > ent.x &&
+            proj.x < ent.x + ent.w &&
+            proj.y > ent.y &&
+            proj.y < ent.y + ent.h
+          ) {
+            // Check Ownership (Pass through own wall)
+            if (ent.ownerId === proj.ownerId) continue;
+
+            // BOUNCE LOGIC
+            // Reflect velocity based on Wall Angle
+            // Wall Normal is perpendicular to its angle
+            const normalAngle = ent.angle + Math.PI / 2;
+            const nx = Math.cos(normalAngle);
+            const ny = Math.sin(normalAngle);
+
+            // Dot Product: v . n
+            const dot = proj.vx * nx + proj.vy * ny;
+
+            // Reflection: v = v - 2 * (v . n) * n
+            proj.vx = proj.vx - 2 * dot * nx;
+            proj.vy = proj.vy - 2 * dot * ny;
+
+            // Push out slightly to prevent sticking
+            proj.x += proj.vx * dt * 2;
+            proj.y += proj.vy * dt * 2;
+
+            entityHit = true; // Bounced, but keeps living
+            break; // Handle one bounce per frame to avoid chaos
+          }
+        }
+      }
+      if (entityHit) continue; // Skip player collision this frame if we hit a wall
+
+      // PLAYER COLLISION
+      for (const [pid, target] of this.players) {
+        if (pid === proj.ownerId || !target.alive) continue;
+        const dist = Math.sqrt(
+          (proj.x - target.x) ** 2 + (proj.y - target.y) ** 2
+        );
+        // Hitbox increased to 35 (Generous for corners)
+        if (dist < 35) {
+          // CALC DAMAGE (Scaled by Attacker Cores)
+          const attacker = this.players.get(proj.ownerId);
+          let dmg = proj.damage || 15;
+
+          if (attacker) {
+            // +9 Damage per Core (User Request)
+            dmg += (attacker.powerCores || 0) * 9;
+          }
+
+          target.hp -= dmg;
+
+          // EMIT VISUAL HIT (Triggers FlashTime on Client)
+          this.io.to("br_lobby").emit("visual_effect", {
+            type: "hit",
+            x: proj.x,
+            y: proj.y,
+            color: "#ff0000",
+            targetId: target.id, // Only this target flashes
+          });
+
+          this.projectiles.splice(i, 1);
+          if (target.hp <= 0) this.killPlayer(target, proj.ownerId);
+          break;
+        }
+      }
+    }
+
+    // BROADCAST
+    this.io.to("br_lobby").emit("br_update", statePack);
+
+    // Check Win
+    if (alive <= 1 && this.players.size > 1) {
+      this.endMatch();
+    }
+  }
+
+  killPlayer(victim, killerId) {
+    victim.alive = false;
+    victim.hp = 0;
+
+    // Notify Victim of Rank
+    let rank = 0;
+    this.players.forEach((p) => {
+      if (p.alive) rank++;
+    });
+    rank += 1; // I am the next one out
+
+    const victimSocket = this.io.sockets.sockets.get(victim.id);
+    if (victimSocket) {
+      let killerName = "Unknown";
+      let killerHero = "Unknown";
+      if (killerId) {
+        const k = this.players.get(killerId);
+        if (k) {
+          killerName = k.username;
+          try {
+            // k.hero is object with name property in some contexts, but string in others?
+            // In Manager constructor, hero is stored as object if passed?
+            // Let's assume k.hero is normalized or check structure.
+            // Actually in BR Manager addPlayer: p.hero = {name: ..., ...} NO,
+            // line 59: this.players.set(socket.id, new Player(...))
+            // Player.js: this.hero = heroData; (Object)
+            // So k.hero.name is correct.
+            killerHero = k.hero.name || k.hero;
+          } catch (e) {
+            killerHero = "Unknown";
+          }
+        }
+      }
+      victimSocket.emit("br_eliminated", {
+        rank,
+        total: this.players.size,
+        killedBy: killerName,
+        killedByHero: killerHero,
+        killerId: killerId, // Send ID for spectating
+      });
+
+      // AWARD COINS (Immediate Feedback)
+      const earned = (this.MAX_PLAYERS - rank) * 10 + (victim.kills || 0) * 50;
+      if (earned > 0) {
+        if (victimSocket) victimSocket.emit("br_rewards", { coins: earned });
+      }
+
+      // SAVE TO DB
+      if (victim.username && victim.username !== "Guest" && earned > 0) {
+        User.findOne({ where: { username: victim.username } })
+          .then((u) => {
+            if (u) {
+              u.coins += earned;
+              u.save();
+              console.log(`[BR] Saved ${earned} coins for ${u.username}`);
+            }
+          })
+          .catch((e) => console.error("Coin Save Error:", e));
+      }
+    }
+
+    // Drop Cores
+    const coresToDrop = Math.max(1, Math.floor(victim.powerCores / 2));
+    for (let i = 0; i < coresToDrop; i++) {
+      this.items.push({
+        x: victim.x + (Math.random() * 40 - 20),
+        y: victim.y + (Math.random() * 40 - 20),
+      });
+    }
+
+    if (killerId) {
+      const killer = this.players.get(killerId);
+      if (killer) {
+        killer.kills = (killer.kills || 0) + 1;
+        // Heal killer?
+        killer.hp = Math.min(killer.maxHp, killer.hp + 200);
+      }
+    }
+  }
+
+  endMatch() {
+    this.state = "ended";
+    let winner = null;
+    this.players.forEach((p) => {
+      if (p.alive) winner = p;
+    });
+
+    const winnerName = winner ? winner.username : "No One";
+
+    // WINNER REWARDS
+    let earned = 0;
+    if (winner) {
+      earned = 500 + (winner.kills || 0) * 50;
+      // Save DB
+      if (winner.username && winner.username !== "Guest") {
+        User.findOne({ where: { username: winner.username } })
+          .then((u) => {
+            if (u) {
+              u.coins += earned;
+              u.save();
+              console.log(
+                `[BR_WIN] Saved ${earned} coins for Winner ${u.username}`
+              );
+            }
+          })
+          .catch((e) => console.error("Win Save Error:", e));
+      }
+    }
+
+    this.io.to("br_lobby").emit("br_game_over", {
+      winner: winnerName,
+      coinsEarned: earned,
+    });
+
+    console.log("[BR] Winner:", winnerName);
+
+    setTimeout(() => {
+      this.players.clear();
+      this.state = "waiting";
+    }, 10000);
+  }
+}
+
+module.exports = BattleRoyaleManager;
