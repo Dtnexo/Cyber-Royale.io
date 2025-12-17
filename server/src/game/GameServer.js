@@ -311,7 +311,7 @@ class GameServer {
                     p.y = Math.max(0, Math.min(1200, ny));
 
                     // Apply Damage
-                    p.hp -= item.damage;
+                    p.takeDamage(item.damage);
 
                     // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
                     // But we want kill credit immediately if possible.
@@ -504,7 +504,7 @@ class GameServer {
                     maxScaledDmg - clampedRatio * (maxScaledDmg - minScaledDmg);
                 }
 
-                target.hp -= Math.floor(dmg);
+                target.takeDamage(Math.floor(dmg));
 
                 // Knockback (Extreme)
                 const angle = Math.atan2(dy, dx);
@@ -590,7 +590,7 @@ class GameServer {
             const dy = ent.y - p.y;
             if (Math.sqrt(dx * dx + dy * dy) < 30) {
               // BOOM
-              p.hp -= 50;
+              p.takeDamage(50);
               // ... emit effect
               this.entities.splice(i, 1);
               // ... kill check
@@ -846,7 +846,7 @@ class GameServer {
               });
             }
 
-            player.hp -= damage;
+            player.takeDamage(damage);
             this.projectiles.splice(i, 1);
 
             // Handle Death
@@ -909,7 +909,7 @@ class GameServer {
           if (dist < 30) {
             // Mine radius approx 12 + player 20
             // EXPLODE
-            player.hp -= 40; // Big damage
+            player.takeDamage(40); // Big damage
             this.entities.splice(i, 1);
 
             if (player.hp <= 0) {

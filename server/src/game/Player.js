@@ -40,7 +40,28 @@ class Player {
     this.freezeShotsActive = false; // Frost skill duration flag
 
     // BATTLE ROYALE STATS
-    this.powerCores = 0; // Number of gems collected
+    // REGEN LOGIC
+    this.lastDamageTime = Date.now();
+    this.lastShootTime = 0;
+  }
+
+  takeDamage(amount) {
+    if (this.shieldActive) amount *= 0.5; // Shield 50% mitigation
+    this.hp -= amount;
+    this.lastDamageTime = Date.now();
+  }
+
+  regenerate(dt) {
+    if (this.hp < this.maxHp && this.hp > 0) {
+      const timeSinceDamage = Date.now() - this.lastDamageTime;
+      const timeSinceShot = Date.now() - this.lastShootTime;
+
+      if (timeSinceDamage > 5000 && timeSinceShot > 5000) {
+        // Regen 5 HP/sec (Slower)
+        this.hp += 5 * dt;
+        if (this.hp > this.maxHp) this.hp = this.maxHp;
+      }
+    }
   }
 
   addCore() {
@@ -51,13 +72,15 @@ class Player {
   }
 
   update(dt) {
+    // Regenerate HP
+    this.regenerate(dt);
+
     // Cooldown tick
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
 
     if (this.isRooted) return; // Skip movement
 
-    // Basic movement logic
     // Basic movement logic
     const moveStep = this.speed * dt;
 
@@ -122,6 +145,8 @@ class Player {
   shoot() {
     if (this.cooldowns.shoot > 0 || this.isFrozen) return null;
 
+    this.lastShootTime = Date.now(); // Reset regen on shoot
+
     // Fire rate: 0.3s normally
     // Blaze: 0.05s (Super Fast)
     // Brawler/Others: 0.15s (Moderate)
@@ -147,6 +172,7 @@ class Player {
       type: this.minesActive ? "MINE_PROJ" : "PROJECTILE",
       friction: this.minesActive ? true : false, // Logic flag for friction
       life: this.minesActive ? 12000 : 2000,
+      isPoison: this.isPoisonous,
     };
   }
 
