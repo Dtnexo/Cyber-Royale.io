@@ -40,7 +40,28 @@ class Player {
     this.freezeShotsActive = false; // Frost skill duration flag
 
     // BATTLE ROYALE STATS
-    this.powerCores = 0; // Number of gems collected
+    // REGEN LOGIC
+    this.lastDamageTime = Date.now();
+    this.lastShootTime = 0;
+  }
+
+  takeDamage(amount) {
+    if (this.shieldActive) amount *= 0.5; // Shield 50% mitigation
+    this.hp -= amount;
+    this.lastDamageTime = Date.now();
+  }
+
+  regenerate(dt) {
+    if (this.hp < this.maxHp && this.hp > 0) {
+      const timeSinceDamage = Date.now() - this.lastDamageTime;
+      const timeSinceShot = Date.now() - this.lastShootTime;
+
+      if (timeSinceDamage > 5000 && timeSinceShot > 5000) {
+        // Regen 5 HP/sec (Slower)
+        this.hp += 5 * dt;
+        if (this.hp > this.maxHp) this.hp = this.maxHp;
+      }
+    }
   }
 
   addCore() {
@@ -51,13 +72,15 @@ class Player {
   }
 
   update(dt) {
+    // Regenerate HP
+    this.regenerate(dt);
+
     // Cooldown tick
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
 
     if (this.isRooted) return; // Skip movement
 
-    // Basic movement logic
     // Basic movement logic
     const moveStep = this.speed * dt;
 
@@ -122,13 +145,15 @@ class Player {
   shoot() {
     if (this.cooldowns.shoot > 0 || this.isFrozen) return null;
 
+    this.lastShootTime = Date.now(); // Reset regen on shoot
+
     // Fire rate: 0.3s normally
     // Blaze: 0.05s (Super Fast)
     // Brawler/Others: 0.15s (Moderate)
     let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
     this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
-    const speed = 600;
+    const speed = this.minesActive ? 600 : 600; // Reduced Mine Speed to 600 (User Request)
     const vx = Math.cos(this.mouseAngle) * speed;
     const vy = Math.sin(this.mouseAngle) * speed;
     const spawnX = this.x + Math.cos(this.mouseAngle) * 30;
@@ -147,6 +172,7 @@ class Player {
       type: this.minesActive ? "MINE_PROJ" : "PROJECTILE",
       friction: this.minesActive ? true : false, // Logic flag for friction
       life: this.minesActive ? 12000 : 2000,
+      isPoison: this.isPoisonous,
     };
   }
 
@@ -373,6 +399,9 @@ class Player {
       setTimeout(() => (this.isPoisonous = false), 5000);
     } else if (name === "Mirage") {
       duration = 4000;
+      // Cooldown starts AFTER invisibility ends (User Request)
+      this.cooldowns.skill += 4000;
+      
       // Decoy: Spawn a fake player and go invisible
       this.isInvisible = true;
       this.speed = this.baseSpeed * 1.5;
@@ -391,6 +420,7 @@ class Player {
         username: this.username || "Unknown", // FAKE NAME
         hp: this.hp, // FAKE HP (Visual)
         maxHp: this.maxHp,
+        powerCores: this.powerCores, // FAKE CORES (Visual)
         color: this.color,
         vx: Math.cos(this.mouseAngle) * this.baseSpeed,
         vy: Math.sin(this.mouseAngle) * this.baseSpeed,
@@ -424,7 +454,7 @@ class Player {
       result = null; // No immediate effect, just buff
     } else if (name === "Engineer") {
       this.cooldowns.skill += 10000; // 10s Cooldown
-      duration = 8000; // 8s Duration (User Request)
+      duration = 8000; // Restored (Fixed regression)
       // Force Field Wall - Protective (Perpendicular to Aim)
       const dist = 60;
       const wx = this.x + Math.cos(this.mouseAngle) * dist;

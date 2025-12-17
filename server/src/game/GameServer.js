@@ -318,7 +318,7 @@ class GameServer {
                     p.y = Math.max(0, Math.min(1200, ny));
 
                     // Apply Damage
-                    p.hp -= item.damage;
+                    p.takeDamage(item.damage);
 
                     // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
                     // But we want kill credit immediately if possible.
@@ -557,8 +557,8 @@ class GameServer {
                   // Distance range: [80, 400]
                   // Damage range: [120, 30]
 
-                  const maxScaledDmg = 120;
-                  const minScaledDmg = 30;
+                  const maxScaledDmg = 100; // Nerfed from 120
+                  const minScaledDmg = 10; // Nerfed from 30
 
                   // Normalize distance from 0.0 (at 80) to 1.0 (at 400)
                   const ratio = (dist - 80) / (blastRadius - 80);
@@ -568,24 +568,46 @@ class GameServer {
                     maxScaledDmg - clampedRatio * (maxScaledDmg - minScaledDmg);
                 }
 
-                target.hp -= Math.floor(dmg);
+                target.takeDamage(Math.floor(dmg));
 
-                // Knockback (Extreme)
+                // Safe Push Logic (Raycast against Obstacles)
                 const angle = Math.atan2(dy, dx);
-                // Push force also scales: Close = HUGE PUSH, Far = Small Push
-                // Force Range: 1000 -> 200
-                const force = 1000 * (1 - dist / blastRadius) + 200;
+                const maxForce = 1000 * (1 - dist / blastRadius) + 200;
+                const steps = 8;
+                const stepDist = maxForce / steps;
+                
+                let safeX = target.x;
+                let safeY = target.y;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                
+                const obstacles = MapData.obstacles || [];
 
-                // Push them
-                let pushX = target.x + Math.cos(angle) * 300; // Distance pushed visually
-                let pushY = target.y + Math.sin(angle) * 300;
-
-                // Clamp to map
-                pushX = Math.max(50, Math.min(MapData.width - 50, pushX));
-                pushY = Math.max(50, Math.min(MapData.height - 50, pushY));
-
-                target.x = pushX;
-                target.y = pushY;
+                for (let s = 1; s <= steps; s++) {
+                    const checkX = target.x + cos * (stepDist * s);
+                    const checkY = target.y + sin * (stepDist * s);
+                    let hitsWall = false;
+                    
+                    // Map Bounds
+                    if (checkX < 50 || checkX > MapData.width - 50 || checkY < 50 || checkY > MapData.height - 50) hitsWall = true;
+                    
+                    // Obstacles
+                    if (!hitsWall) {
+                        for (const obs of obstacles) {
+                            if (checkX > obs.x && checkX < obs.x + obs.w &&
+                                checkY > obs.y && checkY < obs.y + obs.h) {
+                                hitsWall = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (hitsWall) break;
+                    safeX = checkX;
+                    safeY = checkY;
+                }
+                target.x = safeX;
+                target.y = safeY;
 
                 // Kill Check
                 if (target.hp <= 0 && !target.isDead) {
@@ -656,7 +678,7 @@ class GameServer {
             const dy = ent.y - p.y;
             if (Math.sqrt(dx * dx + dy * dy) < 30) {
               // BOOM
-              p.hp -= 50;
+              p.takeDamage(50);
               // ... emit effect
               this.entities.splice(i, 1);
               // ... kill check
@@ -809,9 +831,19 @@ class GameServer {
                 pRect.y < obs.y + obs.h &&
                 pRect.y + pRect.h > obs.y
               ) {
-                // STICK TO WALL
-                p.vx = 0;
-                p.vy = 0;
+                // LOGICAL BOUNCE (AABB Reflection)
+                const pRadius = 5;
+                const ox = (obs.w / 2 + pRadius) - Math.abs((pRect.x + 5) - (obs.x + obs.w / 2));
+                const oy = (obs.h / 2 + pRadius) - Math.abs((pRect.y + 5) - (obs.y + obs.h / 2));
+
+                if (ox < oy) {
+                   p.vx = -p.vx * 0.7; // Bounce X
+                   p.x += (pRect.x + 5 < obs.x + obs.w / 2) ? -ox : ox;
+                } else {
+                   p.vy = -p.vy * 0.7; // Bounce Y
+                   p.y += (pRect.y + 5 < obs.y + obs.h / 2) ? -oy : oy;
+                }
+
                 hitWall = false; // Don't destroy
                 break;
               }
@@ -1027,7 +1059,7 @@ class GameServer {
               });
             }
 
-            player.hp -= damage;
+            player.takeDamage(damage);
             this.projectiles.splice(i, 1);
 
             // Handle Death
@@ -1057,7 +1089,7 @@ class GameServer {
           if (dist < 30) {
             // Mine radius approx 12 + player 20
             // EXPLODE
-            player.hp -= 40; // Big damage
+            player.takeDamage(40); // Big damage
             this.entities.splice(i, 1);
 
             if (player.hp <= 0) {
