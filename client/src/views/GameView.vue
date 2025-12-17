@@ -581,8 +581,10 @@ const drawGrid = (ctx) => {
     x += gridSize
   ) {
     ctx.beginPath();
-    ctx.moveTo(x - cameraX, 0);
-    ctx.lineTo(x - cameraX, window.innerHeight);
+    // Pixel-Perfect rounding
+    const dx = Math.floor(x - cameraX) + 0.5; // +0.5 for crisp canvas lines
+    ctx.moveTo(dx, 0);
+    ctx.lineTo(dx, window.innerHeight);
     ctx.stroke();
   }
   for (
@@ -591,26 +593,39 @@ const drawGrid = (ctx) => {
     y += gridSize
   ) {
     ctx.beginPath();
-    ctx.moveTo(0, y - cameraY);
-    ctx.lineTo(window.innerWidth, y - cameraY);
+    const dy = Math.floor(y - cameraY) + 0.5;
+    ctx.moveTo(0, dy);
+    ctx.lineTo(window.innerWidth, dy);
     ctx.stroke();
   }
 
   // Map Boundary
   if (mapData.width < 2000) {
     // ARENA MODE - CLASSIC BLUE NEON
+    // ARENA MODE - CLASSIC BLUE NEON
     const pulse = Math.abs(Math.sin(Date.now() / 1000)) * 20 + 10;
-    ctx.strokeStyle = "#00f3ff";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.3)"; // Less Luminous (Transparent)
+    ctx.lineWidth = 2; // Moderate Line
     ctx.shadowColor = "#00f3ff";
-    ctx.shadowBlur = pulse;
-    ctx.strokeRect(0 - cameraX, 0 - cameraY, mapData.width, mapData.height);
+    ctx.shadowBlur = 5; // Restored Subtle Glow (User Request)
+    // ROUND COORDS for Boundary
+    ctx.strokeRect(
+      Math.floor(0 - cameraX),
+      Math.floor(0 - cameraY),
+      mapData.width,
+      mapData.height
+    );
   } else {
     // BR MODE - DARK INDUSTRIAL
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 5;
     ctx.shadowBlur = 0;
-    ctx.strokeRect(0 - cameraX, 0 - cameraY, mapData.width, mapData.height);
+    ctx.strokeRect(
+      Math.floor(0 - cameraX),
+      Math.floor(0 - cameraY),
+      mapData.width,
+      mapData.height
+    );
   }
   ctx.shadowBlur = 0; // Reset
 };
@@ -623,8 +638,9 @@ const drawFloorDeco = (ctx) => {
 
   // DRAW CRATES (Underneath players & walls)
   crates.forEach((c) => {
-    const sx = c.x - cameraX;
-    const sy = c.y - cameraY;
+    // ROUND COORDS
+    const sx = Math.floor(c.x - cameraX);
+    const sy = Math.floor(c.y - cameraY);
 
     // Cull Crates
     if (
@@ -636,14 +652,15 @@ const drawFloorDeco = (ctx) => {
       return;
 
     if (c.active) {
-      // Neon Box
-      ctx.fillStyle = "rgba(20, 20, 30, 0.9)";
-      ctx.fillRect(sx, sy, c.w, c.h);
+      // Neon Box - OPAQUE to hide grid lines
+      ctx.fillStyle = "#14141e"; // Solid Dark Blue/Black
+      // ROUND SIZE to avoid sub-pixel gaps + Overfill (User reported lines)
+      ctx.fillRect(sx - 1, sy - 1, Math.ceil(c.w) + 2, Math.ceil(c.h) + 2);
 
       // Border
       ctx.strokeStyle = "#00f3ff";
       ctx.lineWidth = 2;
-      ctx.strokeRect(sx, sy, c.w, c.h);
+      ctx.strokeRect(sx, sy, Math.ceil(c.w), Math.ceil(c.h));
 
       // Inner Glow (Start Removing expensive Blur)
       // ctx.shadowColor = "#00f3ff";
@@ -680,8 +697,9 @@ const drawFloorDeco = (ctx) => {
 
   // DRAW ITEMS
   items.forEach((i) => {
-    const sx = i.x - cameraX;
-    const sy = i.y - cameraY;
+    // ROUND COORDS
+    const sx = Math.floor(i.x - cameraX);
+    const sy = Math.floor(i.y - cameraY);
 
     // Cull Items
     if (
@@ -710,8 +728,9 @@ const drawWalls = (ctx) => {
   const screenH = window.innerHeight;
 
   mapData.obstacles.forEach((obs) => {
-    const screenX = obs.x - cameraX;
-    const screenY = obs.y - cameraY;
+    // ROUND COORDS
+    const screenX = Math.floor(obs.x - cameraX);
+    const screenY = Math.floor(obs.y - cameraY);
 
     // OPTIMIZATION: Viewport Culling
     if (
@@ -728,7 +747,8 @@ const drawWalls = (ctx) => {
 
     // Wall Body (Solid Black to hide everything under it, e.g. bushes)
     ctx.fillStyle = "#000000";
-    ctx.fillRect(screenX, screenY, obs.w, obs.h);
+    // Overfill to prevent sub-pixel gaps (Gray Line Glitch)
+    ctx.fillRect(screenX - 1, screenY - 1, Math.ceil(obs.w) + 2, Math.ceil(obs.h) + 2);
 
     // Neon Glow Border (Simplified for Performance)
     if (obs.type === "WALL") {
@@ -739,7 +759,7 @@ const drawWalls = (ctx) => {
       ctx.strokeStyle = "#ffee00";
     }
     ctx.lineWidth = 2;
-    ctx.strokeRect(screenX, screenY, obs.w, obs.h);
+    ctx.strokeRect(screenX, screenY, Math.ceil(obs.w), Math.ceil(obs.h));
   });
 };
 
@@ -897,8 +917,8 @@ const drawProjectiles = (ctx) => {
 
     // BLACK HOLE SHOT (Nova)
     if (p.type === "BLACK_HOLE_SHOT") {
-      const sx = p.x - cameraX;
-      const sy = p.y - cameraY;
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
       ctx.save();
       ctx.translate(sx, sy);
       ctx.beginPath();
@@ -914,8 +934,8 @@ const drawProjectiles = (ctx) => {
 
     // MINE PROJECTILE (Techno)
     if (p.type === "MINE_PROJ") {
-      const sx = p.x - cameraX;
-      const sy = p.y - cameraY;
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
       ctx.beginPath();
       ctx.arc(sx, sy, 8, 0, Math.PI * 2);
       ctx.fillStyle = "#ffaa00";
@@ -934,8 +954,8 @@ const drawProjectiles = (ctx) => {
 
     // LAVA WAVE (Magma)
     if (p.type === "LAVA_WAVE") {
-      const sx = p.x - cameraX;
-      const sy = p.y - cameraY;
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
       const radius = 25; // Slightly larger
 
       ctx.save();
@@ -956,7 +976,7 @@ const drawProjectiles = (ctx) => {
       ctx.fill();
 
       // Layer 3: Glow
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 10; // Moderate Glow
       ctx.shadowColor = "#ff0000";
       ctx.strokeStyle = "#ff4500";
       ctx.lineWidth = 4;
@@ -973,13 +993,13 @@ const drawProjectiles = (ctx) => {
       return;
     }
 
-    const sx = p.x - cameraX;
-    const sy = p.y - cameraY;
+    const sx = Math.floor(p.x - cameraX);
+    const sy = Math.floor(p.y - cameraY);
 
     ctx.fillStyle = p.color || "#fff";
 
     // FAST GLOW (No ShadowBlur)
-    ctx.globalAlpha = 0.4;
+    ctx.globalAlpha = 0.6; // Restored Visibility (User Request: "On ne voit plus a qui sont les balles")
     ctx.beginPath();
     ctx.arc(sx, sy, 8, 0, Math.PI * 2);
     ctx.fill();
@@ -1002,8 +1022,9 @@ const drawPlayer = (ctx, p) => {
   // Hide Dead Players (Ghosts) from others
   if (p.isDead && p.id !== myId) return;
 
-  const screenX = p.x - cameraX;
-  const screenY = p.y - cameraY;
+  // Round Player position for crisp border rendering (Fix "gray border" or blurry clone)
+  const screenX = Math.floor(p.x - cameraX);
+  const screenY = Math.floor(p.y - cameraY);
 
   // OPTIMIZATION: Cull off-screen players
   // Margin 100px for names/bars/effects
@@ -1022,8 +1043,8 @@ const drawPlayer = (ctx, p) => {
   const heroClass = p.heroClass || p.hero?.class || "Damage";
   const heroName = p.heroName || p.hero?.name || "Unknown";
 
-  // Emit Particles based on Hero
-  if (Math.random() > 0.5) {
+  // Emit Particles based on Hero (DISABLE if invisible and not me)
+  if (Math.random() > 0.5 && (!p.invisible || p.id === myId)) {
     if (heroName === "Spectre") createParticle(p.x, p.y, "#aa00ff", 2, 20); // Purple Trail
     if (heroName === "Vanguard" && p.shield)
       createParticle(p.x, p.y, "#00ffff", 3, 30); // Shield Sparks
@@ -1036,11 +1057,14 @@ const drawPlayer = (ctx, p) => {
   // Stealth Handler
   if (p.invisible) {
     // REVEAL LOGIC: Visible if Me OR Flashing (Hit)
-    if (p.id === myId || p.flashTime > 0) {
-      ctx.globalAlpha = 0.6; // Visible (Ghostly)
-    } else {
-      ctx.globalAlpha = 0; // Invisible
+    if (p.id !== myId && (!p.flashTime || p.flashTime <= 0)) {
+       ctx.restore(); // Restore context before returning
+       return; // Total Invisibility (Forces black artifacts to not exist)
     }
+
+    // If visible (Self or Hit), set Ghost Alpha
+    if (p.id === myId) ctx.globalAlpha = 0.4;
+    else ctx.globalAlpha = 0.6;
   }
 
   ctx.translate(screenX, screenY);
@@ -1055,18 +1079,19 @@ const drawPlayer = (ctx, p) => {
   // We INTERPRET this as: White Flash (Reveal Effect) only for Invisible players.
   // Standard players just get subtle hit feedback or standard shadow.
   if (p.flashTime > 0 && p.invisible) {
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = "#ffffff"; // Bright Reveal Flash
+    ctx.shadowBlur = 10; // Moderate Neon
+    ctx.shadowColor = "#ffffff"; 
   } else {
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = primaryColor; // Standard Glow
+    ctx.shadowBlur = 5; // Moderate Neon (User Request: "Un peu de neon")
+    ctx.shadowColor = primaryColor;
   }
 
   if (heroClass === "Tank") {
   }
 
   // --- POISON AURA (VIPER EFFECT) ---
-  if (p.isPoisoned) {
+  // Disable if Invisible (unless revealed)
+  if (p.isPoisoned && (!p.invisible || p.id === myId || p.flashTime > 0)) {
     ctx.save();
     const time = Date.now() / 200;
     ctx.strokeStyle = "#00FF00"; // Bright Green
@@ -1095,11 +1120,12 @@ const drawPlayer = (ctx, p) => {
   }
 
   // --- ACTIVE SKILL AURA (Energy Pulse) ---
-  if (p.isSkillActive || p.shield) {
+  // Disable if Invisible
+  if ((p.isSkillActive || p.shield) && (!p.invisible || p.id === myId || p.flashTime > 0)) {
     const time = Date.now() / 1000; // Seconds
 
     ctx.save();
-    ctx.shadowBlur = 10;
+    ctx.shadowBlur = 6; // Moderate active skill glow
     ctx.shadowColor = "#FFD700"; // Gold Glow
 
     // Draw 3 expanding waves
@@ -1153,7 +1179,8 @@ const drawPlayer = (ctx, p) => {
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2; // Moderate Border
+    ctx.lineJoin = "round";
     ctx.stroke();
     // Shield
     // Shield
@@ -1227,7 +1254,8 @@ const drawPlayer = (ctx, p) => {
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2; // Moderate Border
+    ctx.lineJoin = "round";
     ctx.stroke();
   } else if (heroClass === "Support") {
     // SUPPORT (Box/Medical) - Point UP
@@ -1241,8 +1269,9 @@ const drawPlayer = (ctx, p) => {
     // Horizontal Cross bar
     ctx.fillRect(-15, -20, 30, 10);
 
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#fff"; // Changed from #000 to #fff for consistency
+    ctx.lineWidth = 2; // Moderate Border
+    ctx.lineJoin = "round";
     ctx.strokeRect(-15, -15, 30, 30); // Inner Detail
   } else {
     // DAMAGE / DEFAULT (Triangle) - Point UP
@@ -1254,7 +1283,8 @@ const drawPlayer = (ctx, p) => {
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
     ctx.stroke();
   }
 
@@ -1458,9 +1488,7 @@ const drawPlayerNames = (ctx) => {
   const me = players.find((p) => p.id === myId);
   if (!me) return;
 
-  players.forEach((p) => {
-    if (p.invisible && p.id !== myId) return; // Don't show HUD for hidden enemies
-
+  const renderHUD = (p) => {
     const screenX = p.x - cameraX;
     const screenY = p.y - cameraY;
 
@@ -1475,34 +1503,40 @@ const drawPlayerNames = (ctx) => {
 
     // BUSH HIDING LOGIC for Names
     const myBushId = getPlayerBushId(me);
-    const targetBushId = getPlayerBushId(p);
+    const targetBushId = getPlayerBushId(p); 
 
     // VISIBILITY CHECK:
-    // 1. Same Bush? -> Visible
-    // 2. Proximity? (Within Fog of War radius) -> Visible
-    // 3. Otherwise -> Hidden if in bush
-
     const dist = Math.hypot(p.x - me.x, p.y - me.y);
-    const visionRadius = 320; // Match the new radius
+    const visionRadius = 320; 
 
     // Hidden if:
     // - Target is in a bush
     // - AND We are NOT in the same bush
     // - AND Target is OUTSIDE my vision radius
-    // - AND Target is not me
+    // - AND Target is not me (or my decoy)
 
     const inBush = targetBushId !== -1;
     const sameBush = targetBushId === myBushId && myBushId !== -1;
     const inVision = dist < visionRadius;
 
-    const visuals = playerVisuals.value[p.id];
-    const isDamaged = visuals && visuals.flashTime > 0;
+    // Identify if it's me or my entity
+    const isMeOrMine = p.id === myId || p.ownerId === myId;
 
-    // Logic: Show if (Not in bush) OR (In same bush) OR (In Vision) OR (Is Damaged) OR (Is Me)
-    // So Hide if: (In Bush) AND (!Same Bush) AND (!In Vision) AND (!Is Damaged) AND (!Is Me)
+    // Visuals (Flash)
+    let isDamaged = false;
+    if (p.id && playerVisuals.value[p.id]) {
+        const v = playerVisuals.value[p.id];
+        if (v.flashTime > 0) isDamaged = true;
+    }
+    // Note: Decoys usually don't have 'id' in the same list as players, so no flash logic for now unless added.
 
-    const isHidden =
-      inBush && !sameBush && !inVision && !isDamaged && p.id !== myId;
+    // Logic: Hide if (Bush Logic) OR (Invisible Skill Logic)
+    const isInvisibleSkill = p.invisible && !isMeOrMine && !isDamaged;
+    
+    // Bush Hide: In Bush AND (Not Same Bush) AND (Not In Vision) AND (Not Damaged) AND (Not Me)
+    const isHiddenBush = inBush && !sameBush && !inVision && !isDamaged && !isMeOrMine;
+
+    const isHidden = isHiddenBush || isInvisibleSkill;
 
     if (p.dead || p.hp <= 0) return; // Hide HUD on death
     if (isHidden) return;
@@ -1513,7 +1547,11 @@ const drawPlayerNames = (ctx) => {
     ctx.textAlign = "center";
     ctx.shadowColor = "#000";
     ctx.shadowBlur = 4;
-    ctx.fillText(p.username || p.hero, screenX, screenY - 65);
+    
+    // Render Name (or Hero name fallback)
+    let name = p.username || p.hero;
+    if (typeof name === 'object') name = name.name; // Handle if hero object passed
+    ctx.fillText(name || "Unknown", screenX, screenY - 65);
 
     // CORES DISPLAY
     if (p.powerCores !== undefined) {
@@ -1526,29 +1564,38 @@ const drawPlayerNames = (ctx) => {
       ctx.fillText(p.powerCores, screenX + 5, coreY);
     }
 
-    // HP Bar (Keep with name)
+    // HP Bar
     const maxHp = p.maxHp || 100;
     const hpPct = Math.max(0, p.hp / maxHp);
-    const barW = 100; // Increased Width
-    const barH = 14; // Increased Height for TEXT
+    const barW = 100; 
+    const barH = 14; 
     const barX = screenX - barW / 2;
     const barY = screenY - 60;
 
     ctx.fillStyle = "#333";
     ctx.fillRect(barX, barY, barW, barH);
-    ctx.fillStyle = p.id === myId ? "#00ff00" : "#ff0000";
+    ctx.fillStyle = isMeOrMine ? "#00ff00" : "#ff0000"; // Green for Me/My Decoy, Red for Enemy
     ctx.fillRect(barX, barY, barW * hpPct, barH);
 
     // HP Text
     ctx.fillStyle = "#fff";
     ctx.font = "bold 10px 'Segoe UI'";
     ctx.textAlign = "center";
-    // Centered in bar
     ctx.fillText(
       `${Math.ceil(p.hp)} / ${Math.ceil(maxHp)}`,
       screenX,
       barY + 11
     );
+  };
+
+  // 1. Render Players
+  players.forEach(renderHUD);
+
+  // 2. Render Decoys
+  entities.forEach(ent => {
+    if (ent.type === 'DECOY') {
+        renderHUD(ent);
+    }
   });
 };
 
@@ -1696,6 +1743,7 @@ const loop = (ctx) => {
       // Reuse drawPlayer logic
       const fakePlayer = {
         ...ent,
+        id: ent.ownerId || "decoy", // Pass ID for potential logic (but not invisibility)
         angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
         hero: ent.heroName,
         heroClass: ent.heroClass,

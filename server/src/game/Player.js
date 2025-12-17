@@ -153,7 +153,7 @@ class Player {
     let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
     this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
-    const speed = 600;
+    const speed = this.minesActive ? 600 : 600; // Reduced Mine Speed to 600 (User Request)
     const vx = Math.cos(this.mouseAngle) * speed;
     const vy = Math.sin(this.mouseAngle) * speed;
     const spawnX = this.x + Math.cos(this.mouseAngle) * 30;
@@ -399,6 +399,9 @@ class Player {
       setTimeout(() => (this.isPoisonous = false), 5000);
     } else if (name === "Mirage") {
       duration = 4000;
+      // Cooldown starts AFTER invisibility ends (User Request)
+      this.cooldowns.skill += 4000;
+      
       // Decoy: Spawn a fake player and go invisible
       this.isInvisible = true;
       this.speed = this.baseSpeed * 1.5;
@@ -417,6 +420,7 @@ class Player {
         username: this.username || "Unknown", // FAKE NAME
         hp: this.hp, // FAKE HP (Visual)
         maxHp: this.maxHp,
+        powerCores: this.powerCores, // FAKE CORES (Visual)
         color: this.color,
         vx: Math.cos(this.mouseAngle) * this.baseSpeed,
         vy: Math.sin(this.mouseAngle) * this.baseSpeed,
@@ -450,7 +454,7 @@ class Player {
       result = null; // No immediate effect, just buff
     } else if (name === "Engineer") {
       this.cooldowns.skill += 10000; // 10s Cooldown
-      duration = 8000; // 8s Duration (User Request)
+      duration = 8000; // Restored (Fixed regression)
       // Force Field Wall - Protective (Perpendicular to Aim)
       const dist = 60;
       const wx = this.x + Math.cos(this.mouseAngle) * dist;

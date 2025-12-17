@@ -362,18 +362,68 @@ class BattleRoyaleManager {
               let dmg = 0;
               if (dist < 80) dmg = 9999; // One Shot
               else {
-                const maxD = 120,
-                  minD = 30;
+                const maxD = 100, // Nerfed from 120
+                  minD = 10; // Nerfed from 30
                 const ratio = (dist - 80) / (blastRadius - 80);
                 dmg = maxD - Math.max(0, Math.min(1, ratio)) * (maxD - minD);
               }
               target.takeDamage(dmg);
 
-              // Knockback
+              // Safe Push Logic (Raycast against Obstacles)
               const angle = Math.atan2(dy, dx);
-              const force = 1000 * (1 - dist / blastRadius) + 200;
-              target.x += Math.cos(angle) * force;
-              target.y += Math.sin(angle) * force;
+              const maxForce = 1000 * (1 - dist / blastRadius) + 200;
+              const steps = 8; // Precision
+              const stepDist = maxForce / steps;
+              
+              let safeX = target.x;
+              let safeY = target.y;
+              const cos = Math.cos(angle);
+              const sin = Math.sin(angle);
+              
+              const obstacles = this.obstacles || []; // Safe fallback
+
+              for (let s = 1; s <= steps; s++) {
+                  const checkX = target.x + cos * (stepDist * s);
+                  const checkY = target.y + sin * (stepDist * s);
+                  let hitsWall = false;
+                  
+                  // Map Bounds
+                  if (checkX < 50 || checkX > 3950 || checkY < 50 || checkY > 3950) hitsWall = true;
+                  
+                  // Obstacles
+                  if (!hitsWall) {
+                      for (const obs of obstacles) {
+                          if (checkX > obs.x && checkX < obs.x + obs.w &&
+                              checkY > obs.y && checkY < obs.y + obs.h) {
+                              hitsWall = true;
+                              break;
+                          }
+                      }
+                  }
+                  
+                  if (hitsWall) break;
+                  safeX = checkX;
+                  safeY = checkY;
+              }
+              target.x = safeX;
+              target.y = safeY;
+
+              // Explicit Kill Check (Fixes Missing Feed)
+              if (target.hp <= 0 && target.alive) {
+                  target.alive = false;
+                  target.hp = 0;
+                  this.spawnItem(target.x, target.y); // Drop Core
+                  // Emit event
+                  this.io.to("br_lobby").emit("player_died", { 
+                       id: target.id, 
+                       killerId: p.id,
+                       name: target.username,
+                       killerName: p.username
+                  });
+                   // Stats
+                  if (p.kills === undefined) p.kills = 0;
+                  p.kills++;
+              }
             }
           });
         }
@@ -467,6 +517,13 @@ class BattleRoyaleManager {
     // PROJECTILES
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
+      
+      // FRICTION (Mines)
+      if (proj.friction) {
+        proj.vx *= 0.9; // Rapid deceleration
+        proj.vy *= 0.9;
+      }
+
       proj.x += proj.vx * dt;
       proj.y += proj.vy * dt;
       proj.life -= dt * 1000;
@@ -492,8 +549,25 @@ class BattleRoyaleManager {
           proj.y < obs.y + obs.h &&
           proj.y + 10 > obs.y
         ) {
-          wallHit = true;
-          break;
+        if (proj.friction) {
+             // TECHNO MINE BOUNCE (AABB Reflection)
+             const pRadius = 5; 
+             const ox = (obs.w / 2 + pRadius) - Math.abs((proj.x + 5) - (obs.x + obs.w / 2));
+             const oy = (obs.h / 2 + pRadius) - Math.abs((proj.y + 5) - (obs.y + obs.h / 2));
+
+             if (ox < oy) {
+                proj.vx = -proj.vx * 0.7; // Bounce X
+                proj.x += (proj.x < obs.x + obs.w / 2) ? -ox : ox;
+             } else {
+                proj.vy = -proj.vy * 0.7; // Bounce Y
+                proj.y += (proj.y < obs.y + obs.h / 2) ? -oy : oy;
+             }
+             // Don't destroy
+             break;
+        } else {
+           wallHit = true;
+           break;
+        }
         }
       }
 
@@ -545,9 +619,8 @@ class BattleRoyaleManager {
             // Check Ownership (Pass through own wall)
             if (ent.ownerId === proj.ownerId) continue;
 
-            // BOUNCE LOGIC
+            // BOUNCE LOGIC (Restored Vector Reflection for Rotated Walls)
             // Reflect velocity based on Wall Angle
-            // Wall Normal is perpendicular to its angle
             const normalAngle = ent.angle + Math.PI / 2;
             const nx = Math.cos(normalAngle);
             const ny = Math.sin(normalAngle);
@@ -562,7 +635,7 @@ class BattleRoyaleManager {
             // Push out slightly to prevent sticking
             proj.x += proj.vx * dt * 2;
             proj.y += proj.vy * dt * 2;
-
+            
             entityHit = true; // Bounced, but keeps living
             break; // Handle one bounce per frame to avoid chaos
           }
