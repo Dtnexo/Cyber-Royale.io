@@ -1549,6 +1549,18 @@ const drawPlayerNames = (ctx) => {
       screenX,
       barY + 11
     );
+
+    // MARKED STATUS
+    if (p.isMarked) {
+      ctx.fillStyle = "#ff00ff"; // Purple/Magenta
+      ctx.font = "bold 16px 'Segoe UI'";
+      ctx.fillText("☠ MARKED ☠", screenX, barY - 15);
+      
+      // Purple Glow Border on Bar
+      ctx.strokeStyle = "#ff00ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
+    }
   });
 };
 
