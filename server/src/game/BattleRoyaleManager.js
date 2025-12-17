@@ -254,7 +254,8 @@ class BattleRoyaleManager {
     if (
       item.type === "PROJECTILE" ||
       item.type === "LAVA_WAVE" ||
-      item.type === "MINE_PROJ"
+      item.type === "MINE_PROJ" ||
+      item.type === "SNIPER_SHOT"
     ) {
       this.projectiles.push(item);
     } else if (item.type === "SHOCKWAVE") {
@@ -524,6 +525,10 @@ class BattleRoyaleManager {
         proj.vy *= 0.9;
       }
 
+
+
+      const prevX = proj.x;
+      const prevY = proj.y; // Store previous position for Raycast
       proj.x += proj.vx * dt;
       proj.y += proj.vy * dt;
       proj.life -= dt * 1000;
@@ -541,6 +546,7 @@ class BattleRoyaleManager {
 
       const pRect = { x: proj.x, y: proj.y, w: 10, h: 10 }; // Approx
 
+      if (!proj.penetrateWalls) {
       for (const obs of obstacles) {
         // STANDARD AABB
         if (
@@ -569,7 +575,8 @@ class BattleRoyaleManager {
            break;
         }
         }
-      }
+        }
+      } // End penetrate check
 
       if (wallHit) {
         this.projectiles.splice(i, 1);
@@ -643,14 +650,38 @@ class BattleRoyaleManager {
       }
       if (entityHit) continue; // Skip player collision this frame if we hit a wall
 
-      // PLAYER COLLISION
+      // PLAYER COLLISION (Raycast for Anti-Tunneling)
       for (const [pid, target] of this.players) {
         if (pid === proj.ownerId || !target.alive) continue;
-        const dist = Math.sqrt(
-          (proj.x - target.x) ** 2 + (proj.y - target.y) ** 2
-        );
-        // Hitbox increased to 35 (Generous for corners)
-        if (dist < 35) {
+        
+        // RAYCAST CHECK
+        // Segment: (prevX, prevY) -> (proj.x, proj.y)
+        // Circle: (target.x, target.y) Radius 35
+        const ax = prevX !== undefined ? prevX : proj.x;
+        const ay = prevY !== undefined ? prevY : proj.y;
+        const bx = proj.x;
+        const by = proj.y;
+        const cx = target.x;
+        const cy = target.y;
+        const r = 35; // Hitbox
+
+        const labX = bx - ax;
+        const labY = by - ay;
+        const lacX = cx - ax;
+        const lacY = cy - ay;
+
+        const lenSq = labX * labX + labY * labY;
+        let t = 0;
+        if (lenSq > 0) {
+            t = (lacX * labX + lacY * labY) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+        }
+        const closetX = ax + t * labX;
+        const closetY = ay + t * labY;
+        
+        const distSq = (cx - closetX)**2 + (cy - closetY)**2;
+
+        if (distSq < r * r) {
           // CALC DAMAGE (Scaled by Attacker Cores)
           const attacker = this.players.get(proj.ownerId);
           let dmg = proj.damage || 15;

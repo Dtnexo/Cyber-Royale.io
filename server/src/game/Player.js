@@ -52,6 +52,9 @@ class Player {
   }
 
   regenerate(dt) {
+    // No Regen if Skill Active (User Request)
+    if (this.isSkillActive) return;
+
     if (this.hp < this.maxHp && this.hp > 0) {
       const timeSinceDamage = Date.now() - this.lastDamageTime;
       const timeSinceShot = Date.now() - this.lastShootTime;
@@ -298,9 +301,9 @@ class Player {
       duration = 500;
       // Railgun Shot (Instant)
 
-      const speed = 2000;
+      const speed = 2500; // Faster (User Request)
       result = {
-        type: "PROJECTILE",
+        type: "SNIPER_SHOT", // Custom Type for Trail
         id: Math.random().toString(36).substr(2, 9),
         x: this.x,
         y: this.y,
@@ -311,6 +314,7 @@ class Player {
         life: 3000,
         damage: 1000, // One Shot
         penetrateWalls: true, // Wall Hack
+        trailDuration: 1500 // Metadata for Client
       };
     } else if (name === "Shadow") {
       this.cooldowns.skill += 5000;
@@ -417,7 +421,7 @@ class Player {
         ownerId: this.id,
         heroName: this.hero.name,
         heroClass: this.hero.class,
-        username: this.username || "Unknown", // FAKE NAME
+        username: this.username, // ADDED: Show real name on clone
         hp: this.hp, // FAKE HP (Visual)
         maxHp: this.maxHp,
         powerCores: this.powerCores, // FAKE CORES (Visual)

@@ -277,7 +277,8 @@ class GameServer {
               } else if (
                 item.type === "PROJECTILE" ||
                 item.type === "LAVA_WAVE" ||
-                item.type === "BLACK_HOLE_SHOT"
+                item.type === "BLACK_HOLE_SHOT" ||
+                item.type === "SNIPER_SHOT"
               ) {
                 this.projectiles.push(item);
               } else if (item.type === "DECOY") {
@@ -403,7 +404,10 @@ class GameServer {
             // Respawn Now - Restore Stats
             player.isDead = false;
             player.hp = player.maxHp;
-            // Coordinates already set at death time
+            // Reset Position (Fixes "Respawn where died" bug)
+            const spawn = this.getSafeSpawn();
+            player.x = spawn.x;
+            player.y = spawn.y;
             player.cooldowns.skill = 0;
             player.cooldowns.shoot = 0;
             player.freezeEndTime = 0;
@@ -550,8 +554,18 @@ class GameServer {
                   const killer = this.players.get(player.id);
                   if (killer) killer.kills++;
                   target.isDead = true;
+                  
+                  // Set Killer Info for "You Died" Screen
+                  target.killedBy = player.username;
+                  target.killedByHero = player.hero.name;
+
                   target.respawnTime = Date.now() + 5000;
-                  this.io.emit("player_died", { id: pid, killerId: player.id });
+                  this.io.emit("player_died", { 
+                    id: pid, 
+                    killerId: player.id, 
+                    killerName: player.username,
+                    name: target.username // Added for Kill Feed
+                  });
                 }
               }
             }
@@ -634,11 +648,11 @@ class GameServer {
         // BLACK HOLE SHOT REMOVED (Replaced by Supernova)
 
         // Standard Projectile Physics
+        const prevX = p.x;
+        const prevY = p.y; // Store previous position for Raycast Collision
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
-
-        // FRICTION LOGIC (Techno Mines)
 
         // FRICTION LOGIC (Techno Mines)
         if (p.friction) {
@@ -792,12 +806,40 @@ class GameServer {
           if (p.ownerId === id) continue; // Don't hit self
           if (player.isDead) continue; // Ghost Mode: Bullets pass through dead players
 
-          // Simple Circle Collision
-          const dx = p.x - player.x;
-          const dy = p.y - player.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+          // Raycast Collision (Segment vs Circle)
+          // Fixes Tunneling for high-speed projectiles (Sniper)
+          const ax = prevX !== undefined ? prevX : p.x;
+          const ay = prevY !== undefined ? prevY : p.y;
+          const bx = p.x;
+          const by = p.y;
+          const cx = player.x;
+          const cy = player.y;
+          const r = 30; // Hitbox radius (Liberal 30px)
 
-          if (dist < 25) {
+          // Vector AB
+          const labX = bx - ax;
+          const labY = by - ay;
+          // Vector AC
+          const lacX = cx - ax;
+          const lacY = cy - ay;
+
+          // Project C onto Line AB (clamp t 0..1)
+          const lenSq = labX * labX + labY * labY;
+          let t = 0;
+          if (lenSq > 0) {
+             t = (lacX * labX + lacY * labY) / lenSq;
+             t = Math.max(0, Math.min(1, t));
+          }
+          
+          // Closest point on segment
+          const closetX = ax + t * labX;
+          const closetY = ay + t * labY;
+
+          const dx = cx - closetX;
+          const dy = cy - closetY;
+          const distSq = dx * dx + dy * dy;
+
+          if (distSq < r * r) {
             // Collision
             // Check Shield
             if (player.shieldActive) {

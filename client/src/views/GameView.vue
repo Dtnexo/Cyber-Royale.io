@@ -318,6 +318,16 @@ onMounted(async () => {
 
   socket.value.on("player_died", (data) => {
     spawnExplosion(data.x, data.y, data.color);
+
+    // Nova Kill Feed (Killer Side)
+    if (data.killerId === myId && data.name) {
+      const id = Date.now();
+      killMessages.value.push({ id, text: `YOU ELIMINATED ${data.name}` });
+      setTimeout(() => {
+        const idx = killMessages.value.findIndex((m) => m.id === id);
+        if (idx !== -1) killMessages.value.splice(idx, 1);
+      }, 3000);
+    }
   });
 
   socket.value.on("visual_effect", (data) => {
@@ -901,6 +911,21 @@ const drawParticles = (ctx) => {
       ctx.rotate(p.angle);
       ctx.fillRect(-3, -3, 6, 6); // Larger
       ctx.restore();
+    } else if (p.type === "trail") {
+      // Sniper Trail Glow (User Request)
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = p.color;
+      ctx.fillStyle = p.color; 
+      
+      // Draw Circle for smooth trail
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2); 
+      ctx.fill();
+      
+      ctx.shadowBlur = 0;
     } else {
       // Standard Spark
       ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
@@ -993,6 +1018,50 @@ const drawProjectiles = (ctx) => {
       return;
     }
 
+    // SNIPER SHOT TRAIL (User Request)
+    if (p.type === "SNIPER_SHOT") {
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
+      
+      // Draw Bullet
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      // Glow
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#00f3ff";
+      ctx.strokeStyle = "#00f3ff";
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Spawn Long-Lasting Trail Particle (Backfill for continuous line)
+      // Speed 2500 / 60 fps = ~41 pixels per frame. Backfill to close gaps.
+      // Spawn Long-Lasting Trail Particle (Backfill for continuous line)
+      // Speed 2500 / 60 fps = ~41 pixels per frame. Backfill to close gaps.
+      for (let i = 0; i < 5; i++) {
+        // Interpolate backwards
+        // Assuming 60fps delta (0.016s)
+        const dt = 0.016; 
+        const offset = i / 5;
+        const bx = p.x - (p.vx * dt * offset); 
+        const by = p.y - (p.vy * dt * offset);
+        
+        particles.push({
+            x: bx,
+            y: by,
+            vx: 0,
+            vy: 0,
+            life: 90, 
+            maxLife: 90,
+            color: "rgba(0, 243, 255, 0.6)",
+            id: Date.now() + Math.random(),
+            type: "trail"
+        });
+      }
+      return;
+    }
+
     const sx = Math.floor(p.x - cameraX);
     const sy = Math.floor(p.y - cameraY);
 
@@ -1056,10 +1125,10 @@ const drawPlayer = (ctx, p) => {
 
   // Stealth Handler
   if (p.invisible) {
-    // REVEAL LOGIC: Visible if Me OR Flashing (Hit)
-    if (p.id !== myId && (!p.flashTime || p.flashTime <= 0)) {
-       ctx.restore(); // Restore context before returning
-       return; // Total Invisibility (Forces black artifacts to not exist)
+    // TRUE INVISIBILITY: No Flashing Reveal (Prevents "Skeleton" Glitch)
+    if (p.id !== myId) {
+       ctx.restore();
+       return; 
     }
 
     // If visible (Self or Hit), set Ghost Alpha
