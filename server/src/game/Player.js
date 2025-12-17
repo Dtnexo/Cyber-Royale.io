@@ -40,28 +40,7 @@ class Player {
     this.freezeShotsActive = false; // Frost skill duration flag
 
     // BATTLE ROYALE STATS
-    // REGEN LOGIC
-    this.lastDamageTime = Date.now();
-    this.lastShootTime = 0;
-  }
-
-  takeDamage(amount) {
-    if (this.shieldActive) amount *= 0.5; // Shield 50% mitigation
-    this.hp -= amount;
-    this.lastDamageTime = Date.now();
-  }
-
-  regenerate(dt) {
-    if (this.hp < this.maxHp && this.hp > 0) {
-      const timeSinceDamage = Date.now() - this.lastDamageTime;
-      const timeSinceShot = Date.now() - this.lastShootTime;
-
-      if (timeSinceDamage > 5000 && timeSinceShot > 5000) {
-        // Regen 5 HP/sec (Slower)
-        this.hp += 5 * dt;
-        if (this.hp > this.maxHp) this.hp = this.maxHp;
-      }
-    }
+    this.powerCores = 0; // Number of gems collected
   }
 
   addCore() {
@@ -72,15 +51,13 @@ class Player {
   }
 
   update(dt) {
-    // Regenerate HP
-    this.regenerate(dt);
-
     // Cooldown tick
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
 
     if (this.isRooted) return; // Skip movement
 
+    // Basic movement logic
     // Basic movement logic
     const moveStep = this.speed * dt;
 
@@ -145,8 +122,6 @@ class Player {
   shoot() {
     if (this.cooldowns.shoot > 0 || this.isFrozen) return null;
 
-    this.lastShootTime = Date.now(); // Reset regen on shoot
-
     // Fire rate: 0.3s normally
     // Blaze: 0.05s (Super Fast)
     // Brawler/Others: 0.15s (Moderate)
@@ -172,7 +147,6 @@ class Player {
       type: this.minesActive ? "MINE_PROJ" : "PROJECTILE",
       friction: this.minesActive ? true : false, // Logic flag for friction
       life: this.minesActive ? 12000 : 2000,
-      isPoison: this.isPoisonous,
     };
   }
 
@@ -485,6 +459,52 @@ class Player {
       duration = 500;
       // Self Heal (Instant)
       this.hp = Math.min(this.maxHp, this.hp + 100);
+    }
+
+    // === NEW REQUESTED CHARACTERS ===
+    else if (name === "Guardian") {
+      this.cooldowns.skill += 12000;
+      duration = 8000;
+      // Healing Station: Fixed position entity
+      result = {
+        type: "HEALING_STATION",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 200,
+        healRate: 20, // per tick/second
+        life: 8000,
+        color: "#00ff7f"
+      };
+    } else if (name === "Revenant") {
+      // Mark of the Abyss
+      const speed = 1500;
+      result = {
+        type: "MARKER_SHOT",
+        id: Math.random().toString(36).substr(2, 9),
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(this.mouseAngle) * speed,
+        vy: Math.sin(this.mouseAngle) * speed,
+        ownerId: this.id,
+        color: "#4b0082",
+        life: 1500,
+        damage: 50, // Buffed
+        radius: 15, // Larger hitbox
+        effect: "MARK"
+      };
+    } else if (name === "Crusher") {
+      this.cooldowns.skill += 10000;
+      duration = 500; // Instant effect visual
+      // Gravity Slam
+      result = {
+        type: "GRAVITY_SLAM",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 300,
+        knockback: -150 // Negative for Pull
+      };
     }
 
     // === COMMON AURA LOGIC ===

@@ -367,7 +367,7 @@ class BattleRoyaleManager {
                 const ratio = (dist - 80) / (blastRadius - 80);
                 dmg = maxD - Math.max(0, Math.min(1, ratio)) * (maxD - minD);
               }
-              target.takeDamage(dmg);
+              target.hp -= dmg;
 
               // Knockback
               const angle = Math.atan2(dy, dx);
@@ -407,7 +407,7 @@ class BattleRoyaleManager {
         const dy = p.y - this.zone.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > this.zone.radius) {
-          p.takeDamage(50 * dt); // Zone Logic
+          p.hp -= 50 * dt; // Zone Logic
         }
 
         // Shoot
@@ -519,7 +519,7 @@ class BattleRoyaleManager {
           if (crate.hp <= 0) {
             crate.active = false; // "Destroyed" visually
             // Drop Core
-            this.spawnItem(crate.x + 30, crate.y + 30);
+            this.items.push({ x: crate.x + 30, y: crate.y + 30 });
             this.crates.splice(c, 1); // Remove for now or mark dead
           }
           break;
@@ -587,28 +587,7 @@ class BattleRoyaleManager {
             dmg += (attacker.powerCores || 0) * 9;
           }
 
-          // VIPER POISON LOGIC
-          if (proj.isPoison) {
-            dmg += 25; // Bonus Damage
-            target.speed = target.baseSpeed * 0.4; // 60% Slow
-            target.isPoisoned = true;
-
-            if (target.poisonTimeout) clearTimeout(target.poisonTimeout);
-            target.poisonTimeout = setTimeout(() => {
-              target.speed = target.baseSpeed;
-              target.isPoisoned = false;
-              target.poisonTimeout = null;
-            }, 3000);
-
-            this.io.to("br_lobby").emit("visual_effect", {
-              type: "poison_hit",
-              targetId: target.id,
-              x: target.x,
-              y: target.y,
-            });
-          }
-
-          target.takeDamage(dmg);
+          target.hp -= dmg;
 
           // EMIT VISUAL HIT (Triggers FlashTime on Client)
           this.io.to("br_lobby").emit("visual_effect", {
@@ -696,13 +675,13 @@ class BattleRoyaleManager {
       }
     }
 
-      // Drop Cores
+    // Drop Cores
     const coresToDrop = Math.max(1, Math.floor(victim.powerCores / 2));
     for (let i = 0; i < coresToDrop; i++) {
-      this.spawnItem(
-        victim.x + (Math.random() * 80 - 40), // Increased spread slightly
-        victim.y + (Math.random() * 80 - 40)
-      );
+      this.items.push({
+        x: victim.x + (Math.random() * 40 - 20),
+        y: victim.y + (Math.random() * 40 - 20),
+      });
     }
 
     if (killerId) {
@@ -713,14 +692,6 @@ class BattleRoyaleManager {
         killer.hp = Math.min(killer.maxHp, killer.hp + 200);
       }
     }
-  }
-
-  spawnItem(x, y) {
-    // Clamp to Safe Map Area (Walls are 50px thick, map is 4000x4000)
-    // Safe zone approx 60 to 3940
-    const safeX = Math.max(70, Math.min(3930, x));
-    const safeY = Math.max(70, Math.min(3930, y));
-    this.items.push({ x: safeX, y: safeY });
   }
 
   forceRemovePlayer(username) {
