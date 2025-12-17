@@ -242,11 +242,8 @@ async function seed() {
           { name: "Quantum", value: "#48d1cc" }
         ],
         stats: { hp: 75, speed: 170, cooldown: 4000 }
-      }
-    ];
-
-    // --- NEW REQUESTED HEROES ---
-    const newHeroes = [
+      },
+      // --- RECENTLY ADDED ---
       {
         id: 22,
         name: "Guardian",
@@ -279,21 +276,27 @@ async function seed() {
           { name: "Rock", value: "#696969" }
         ],
         stats: { hp: 300, speed: 60, cooldown: 10000 }
+      },
+      // --- NEWEST HERO ---
+      {
+        id: 25,
+        name: "Aegis",
+        price: 1500,
+        class: "Speed",
+        skins: [
+          { name: "Default", value: "#ffd700" }, // Gold
+          { name: "Platinum", value: "#e5e4e2" }
+        ],
+        stats: { hp: 90, speed: 140, cooldown: 8000 }
       }
     ];
 
-    const allHeroes = [...heroes, ...newHeroes];
-
-    await Hero.bulkCreate(allHeroes, {
+    await Hero.bulkCreate(heroes, {
       updateOnDuplicate: ["name", "price", "stats", "class", "skins"],
     });
     console.log("Heroes seeded successfully!");
 
     // --- SEED ADMIN USER ---
-    const adminUsername = "CommandantX";
-    const adminPassword = "NeonPrime2077!";
-    const adminEmail = "admin@cyber-royale.io";
-
     const existingAdmin = await User.findOne({
       where: { username: adminUsername },
     });

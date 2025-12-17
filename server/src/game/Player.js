@@ -533,7 +533,25 @@ class Player {
         x: this.x,
         y: this.y,
         radius: 300,
-        knockback: -150 // Negative for Pull
+        knockback: -150
+      };
+    } else if (name === "Aegis") {
+      // Boomerang Shield
+      const speed = 1000;
+      result = {
+        type: "BOOMERANG",
+        id: Math.random().toString(36).substr(2, 9),
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(this.mouseAngle) * speed,
+        vy: Math.sin(this.mouseAngle) * speed,
+        color: "#ffd700", // Gold
+        life: 3000,
+        damage: 40,
+        radius: 20,
+        returning: false,
+        maxDist: 400
       };
     }
 

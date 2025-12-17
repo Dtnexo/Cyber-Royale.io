@@ -1610,11 +1610,11 @@ const drawLeaderboard = (ctx) => {
   const top5 = sorted.slice(0, 5);
 
   const boxW = 200;
-  const boxH = 30 + top5.length * 25;
-  const startX = window.innerWidth - boxW - 20; // Moved to RIGHT
-  const startY = 160; // Below Rank/HUD & Abort Button
+  const boxH = 50 + top5.length * 25;
+  const startX = window.innerWidth - boxW - 20;
+  const startY = 20;
 
-  // Bg
+  // Background
   ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
   ctx.fillRect(startX, startY, boxW, boxH);
   ctx.strokeStyle = "#00f3ff";
