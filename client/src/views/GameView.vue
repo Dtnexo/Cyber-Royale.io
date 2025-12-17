@@ -45,6 +45,7 @@ let myId = null;
 const inQueue = ref(true);
 const queueCount = ref(0);
 const queueMax = ref(14);
+const queuePlayers = ref([]); // List of names
 const customStatus = ref("");
 const aliveCount = ref(0);
 const powerCores = ref(0); // My gems
@@ -162,7 +163,21 @@ onMounted(async () => {
     inQueue.value = true;
     queueCount.value = data.count;
     queueMax.value = data.max;
-    customStatus.value = "";
+    queuePlayers.value = data.players || [];
+    // Don't clear customStatus here to preserve "leave" messages briefly if we want
+    // But usually queue update overrides. Let's keep it simple.
+    // customStatus.value = ""; 
+  });
+
+  socket.value.on("queue_notification", (data) => {
+    if (data.type === "leave") {
+       // Show who left
+       customStatus.value = data.message;
+       // Clear after 2 seconds
+       setTimeout(() => {
+          if (customStatus.value === data.message) customStatus.value = "";
+       }, 2000);
+    }
   });
 
   socket.value.on("queue_status", (msg) => {
@@ -428,7 +443,10 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  if (socket.value) socket.value.disconnect();
+  if (socket.value) {
+    socket.value.emit("leave_queue");
+    socket.value.disconnect();
+  }
   window.removeEventListener("keydown", handleKey);
   window.removeEventListener("keyup", handleKey);
   window.removeEventListener("mousemove", handleMouse);
@@ -1797,6 +1815,27 @@ if (canvasRef.value) {
             >Destroy crates to gather Power Cores and increase HP.</span
           >
         </div>
+
+        <button
+          class="btn-quit"
+          style="margin-top: 20px"
+          @click="router.push('/dashboard')"
+        >
+          CANCEL SEARCH
+        </button>
+      </div>
+
+      <!-- RIGHT SIDE PLAYER LIST -->
+      <div class="mm-player-list">
+        <h3>SQUAD LIST</h3>
+        <div class="player-list-scroll">
+          <div v-for="player in queuePlayers" :key="player" class="player-entry">
+             <span class="p-icon">👤</span> {{ player }}
+          </div>
+          <div v-if="queuePlayers.length === 0" class="empty-list">
+            Scanning...
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2007,7 +2046,11 @@ if (canvasRef.value) {
       </div>
 
       <div class="hud-panel right">
-        <button @click="router.push('/dashboard')" class="btn-quit">
+        <button
+          @click="router.push('/dashboard')"
+          class="btn-quit"
+          v-if="route.query.mode !== 'battle_royale'"
+        >
           ABORT MISSION
         </button>
       </div>
@@ -2826,6 +2869,64 @@ if (canvasRef.value) {
   color: #ffd700;
   font-weight: bold;
   margin-right: 5px;
+}
+
+/* PLAYER LIST RIGHT SIDE */
+.mm-player-list {
+  position: absolute;
+  right: 50px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 250px;
+  height: 400px;
+  background: rgba(0, 0, 20, 0.9);
+  border: 1px solid #00f3ff;
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  z-index: 102;
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.1);
+}
+
+.mm-player-list h3 {
+  color: #00f3ff;
+  border-bottom: 1px solid rgba(0, 243, 255, 0.3);
+  padding-bottom: 10px;
+  margin-bottom: 15px;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+.player-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-entry {
+  color: #fff;
+  font-size: 1.1rem;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.p-icon {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.empty-list {
+  color: #666;
+  font-style: italic;
+  text-align: center;
+  margin-top: 50px;
 }
 
 .arena-respawn-box {

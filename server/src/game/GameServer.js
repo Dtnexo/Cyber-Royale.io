@@ -65,6 +65,24 @@ class GameServer {
             return;
           }
 
+          // === GLOBAL SINGLE SESSION ENFORCEMENT ===
+          if (username && username !== "Unknown") {
+            // 1. Check Arena
+            for (const [pid, p] of this.players) {
+              if (p.username === username) {
+                const oldSocket = this.io.sockets.sockets.get(pid);
+                if (oldSocket) {
+                  oldSocket.emit("error_message", "Logged in from another location.");
+                  oldSocket.disconnect(true);
+                }
+                this.players.delete(pid);
+              }
+            }
+             // 2. Check BR (Queue & Active)
+            this.brManager.forceRemovePlayer(username);
+          }
+          // =========================================
+
           // Fetch hero stats from DB
           try {
             let hero = await Hero.findByPk(heroId);
@@ -327,7 +345,12 @@ class GameServer {
         }
       });
 
+      socket.on("leave_queue", () => {
+        this.brManager.leaveQueue(socket);
+      });
+
       socket.on("disconnect", () => {
+        this.brManager.handleDisconnect(socket);
         const p = this.players.get(socket.id);
         if (p) {
           this.players.delete(socket.id);

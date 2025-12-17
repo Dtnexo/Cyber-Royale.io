@@ -54,10 +54,63 @@ class BattleRoyaleManager {
     this.io.to("br_lobby").emit("queue_update", {
       count: this.queue.length,
       max: this.MAX_PLAYERS,
+      players: this.queue.map((q) => q.playerData.username),
     });
 
     if (this.queue.length === this.MIN_PLAYERS_TO_START) this.startQueueTimer();
     if (this.queue.length >= this.MAX_PLAYERS) this.startCountdown();
+  }
+
+  leaveQueue(socket) {
+    const idx = this.queue.findIndex((q) => q.socket.id === socket.id);
+    if (idx !== -1) {
+      const username = this.queue[idx].playerData.username;
+      this.queue.splice(idx, 1);
+
+      this.io.to("br_lobby").emit("queue_notification", {
+        type: "leave",
+        message: `${username} ABORTED DEPLOYMENT`,
+      });
+
+      this.io.to("br_lobby").emit("queue_update", {
+        count: this.queue.length,
+        max: this.MAX_PLAYERS,
+        players: this.queue.map((q) => q.playerData.username),
+      });
+
+      // Reset timer if we drop below min players
+      if (
+        this.queue.length < this.MIN_PLAYERS_TO_START &&
+        this.queueTimer
+      ) {
+        clearInterval(this.queueTimer);
+        this.queueTimer = null;
+        this.io.to("br_lobby").emit("queue_status", "Waiting for players...");
+        this.io.to("br_lobby").emit("queue_timer", 0); // Hide timer
+      }
+    }
+  }
+
+  handleDisconnect(socket) {
+    // 1. Remove from Queue if there
+    this.leaveQueue(socket);
+
+    // 2. Kill/Remove if in Match
+    if (this.state === "active" || this.state === "countdown") {
+      const p = this.players.get(socket.id);
+      if (p && p.alive) {
+        console.log(`[BR] Player ${p.username} disconnected.`);
+        this.killPlayer(p, null); // Kill them to drop loot
+        // We do NOT remove from map immediately so stats/spectating works for a bit?
+        // But honestly, if they disconnect, they are gone.
+        // killPlayer sets alive=false.
+      }
+      // If state is countdown, we might want to just remove them completely?
+      // But startMatch uses this.players.
+      if (this.state === "countdown") {
+        this.players.delete(socket.id);
+      }
+    }
   }
 
   startQueueTimer() {
@@ -641,11 +694,48 @@ class BattleRoyaleManager {
     }
   }
 
+  forceRemovePlayer(username) {
+    // 1. Queue
+    const qIdx = this.queue.findIndex((q) => q.playerData.username === username);
+    if (qIdx !== -1) {
+      const s = this.queue[qIdx].socket;
+      s.emit("error_message", "New session started.");
+      s.disconnect(true);
+      this.queue.splice(qIdx, 1);
+      this.io.to("br_lobby").emit("queue_update", {
+        count: this.queue.length,
+        max: this.MAX_PLAYERS,
+      });
+    }
+
+    // 2. Active Match
+    if (this.state === "active" || this.state === "countdown") {
+      for (const [pid, p] of this.players) {
+        if (p.username === username) {
+          // Found them.
+          const s = this.io.sockets.sockets.get(pid);
+          if (s) s.disconnect(true);
+          
+          if (this.state === "countdown") {
+             this.players.delete(pid);
+          } else {
+             this.killPlayer(p, null);
+             // Trigger update check next loop
+          }
+        }
+      }
+    }
+  }
+
   endMatch() {
     this.state = "ended";
     let winner = null;
+    let aliveCount = 0;
     this.players.forEach((p) => {
-      if (p.alive) winner = p;
+      if (p.alive) {
+          winner = p;
+          aliveCount++;
+      }
     });
 
     const winnerName = winner ? winner.username : "No One";
@@ -677,10 +767,16 @@ class BattleRoyaleManager {
 
     console.log("[BR] Winner:", winnerName);
 
+    // If 0 players alive (Everyone left), reset QUICKLY
+    const resetTime = (aliveCount === 0) ? 1000 : 10000;
+
     setTimeout(() => {
       this.players.clear();
       this.state = "waiting";
-    }, 10000);
+      this.io.to("br_lobby").emit("queue_status", "Waiting for players...");
+      // Also reset queue timer/countdown just in case
+      this.io.to("br_lobby").emit("br_countdown", -1);
+    }, resetTime);
   }
 }
 
