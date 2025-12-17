@@ -279,10 +279,8 @@ class GameServer {
                 item.type === "LAVA_WAVE" ||
 
                 item.type === "BLACK_HOLE_SHOT" ||
-                item.type === "SNIPER_SHOT"
-
-                item.type === "MARKER_SHOT" ||
-                item.type === "BLACK_HOLE_SHOT"
+                item.type === "SNIPER_SHOT" ||
+                item.type === "MARKER_SHOT"
               ) {
                 this.projectiles.push(item);
               } else if (item.type === "HEALING_STATION") {

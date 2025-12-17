@@ -1669,6 +1669,16 @@ const drawPlayerNames = (ctx) => {
       ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
 
     }
+  };
+
+  // 1. Render Players
+  players.forEach(renderHUD);
+
+  // 2. Render Decoys
+  entities.forEach(ent => {
+    if (ent.type === 'DECOY') {
+        renderHUD(ent);
+    }
   });
 };
 
