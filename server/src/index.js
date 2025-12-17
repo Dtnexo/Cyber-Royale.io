@@ -53,7 +53,7 @@ const seed = require("./scripts/seed");
 const { Hero } = require("./models");
 
 sequelize
-  .sync() // Removed { alter: true } to prevent "Too Many Keys" loop
+  .sync({ alter: true }) // Temporarily enable alter to add missing columns (brWins, etc.)
   .then(async () => {
     console.log("Database synced");
 
