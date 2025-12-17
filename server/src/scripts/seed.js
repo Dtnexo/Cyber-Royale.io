@@ -6,6 +6,13 @@ async function seed() {
     // Safe Sync: Update existing tables without dropping data
     await sequelize.sync();
 
+    // Cleanup removed heroes (Fix for user request)
+    await Hero.destroy({
+      where: {
+        name: ["Guardian", "Revenant", "Crusher", "Aegis"]
+      }
+    });
+
     // Ensure Heroes table is updated with new prices
     const heroes = [
       {
@@ -242,52 +249,6 @@ async function seed() {
           { name: "Quantum", value: "#48d1cc" }
         ],
         stats: { hp: 75, speed: 170, cooldown: 4000 }
-      },
-      // --- RECENTLY ADDED ---
-      {
-        id: 22,
-        name: "Guardian",
-        price: 1350,
-        class: "Support",
-        skins: [
-          { name: "Default", value: "#00ff7f" },
-          { name: "Angel", value: "#f0ffff" }
-        ],
-        stats: { hp: 150, speed: 100, cooldown: 12000 }
-      },
-      {
-        id: 23,
-        name: "Revenant",
-        price: 1450,
-        class: "Damage",
-        skins: [
-          { name: "Default", value: "#4b0082" },
-          { name: "Crimson", value: "#800000" }
-        ],
-        stats: { hp: 90, speed: 125, cooldown: 10000 }
-      },
-      {
-        id: 24,
-        name: "Crusher",
-        price: 1600,
-        class: "Tank",
-        skins: [
-          { name: "Default", value: "#8b4513" },
-          { name: "Rock", value: "#696969" }
-        ],
-        stats: { hp: 300, speed: 60, cooldown: 10000 }
-      },
-      // --- NEWEST HERO ---
-      {
-        id: 25,
-        name: "Aegis",
-        price: 1500,
-        class: "Speed",
-        skins: [
-          { name: "Default", value: "#ffd700" }, // Gold
-          { name: "Platinum", value: "#e5e4e2" }
-        ],
-        stats: { hp: 90, speed: 140, cooldown: 8000 }
       }
     ];
 

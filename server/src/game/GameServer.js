@@ -279,16 +279,9 @@ class GameServer {
                 item.type === "LAVA_WAVE" ||
 
                 item.type === "BLACK_HOLE_SHOT" ||
-                item.type === "SNIPER_SHOT" ||
-                item.type === "MARKER_SHOT"
+                item.type === "SNIPER_SHOT"
               ) {
                 this.projectiles.push(item);
-              } else if (item.type === "HEALING_STATION") {
-                this.entities.push(item);
-                setTimeout(() => {
-                  const idx = this.entities.indexOf(item);
-                  if (idx > -1) this.entities.splice(idx, 1);
-                }, item.life);
               } else if (item.type === "DECOY") {
                 this.entities.push(item);
                 setTimeout(() => {
@@ -296,7 +289,7 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE" || item.type === "GRAVITY_SLAM") {
+              } else if (item.type === "SHOCKWAVE") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
@@ -463,6 +456,13 @@ class GameServer {
 
       // 1. Update Players & Handle Shooting
       this.players.forEach((player) => {
+        // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "New Heroes invisible on kill")
+        if (player.hero.name !== "Mirage" && player.hero.name !== "Shadow") {
+            player.invisible = false;
+        }
+        // SAFEGUARD: NaN HP check
+        if (isNaN(player.hp)) player.hp = player.maxHp;
+
         // Respawn Logic
         if (player.isDead) {
           if (Date.now() > player.respawnTime) {
@@ -705,28 +705,7 @@ class GameServer {
               break;
             }
           }
-        } else if (ent.type === "HEALING_STATION") {
-          // Heal nearby allies
-          for (const [pid, p] of this.players) {
-            if (p.isDead) continue;
-            // Allow self-heal and team heal logic (For now, heal everyone or just self? Let's say Friendly Fire is OFF, so heal Self + maybe concept of teams later?
-            // For FFA, heal ONLY owner? Or heal anyone nearby?
-            // Usually Support heals allies. In FFA, maybe it heals anyone?
-            // Let's make it heal OWNER and anyone else (Risky in FFA).
-            // Safe bet: Heal Owner, and maybe allies if we had teams.
-            // Re-reading request: "Support". implies helping others.
-            // Let's heal everyone nearby for chaos/fun or just owner.
-            // Code: Heal nearby players.
-            const dx = ent.x - p.x;
-            const dy = ent.y - p.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < ent.radius) {
-              if (p.hp < p.maxHp) {
-                p.hp = Math.min(p.maxHp, p.hp + ent.healRate * dt);
-              }
-            }
-          }
-        }
+        } else if (ent.type === "DECOY") { }
       }
 
       // 2. Update Projectiles
@@ -741,57 +720,6 @@ class GameServer {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
-
-        // BOOMERANG LOGIC (Aegis)
-        if (p.type === "BOOMERANG") {
-          const owner = this.players.get(p.ownerId);
-          if (owner) {
-            const dx = p.x - owner.x;
-            const dy = p.y - owner.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-
-            if (!p.returning) {
-              if (dist > (p.maxDist || 400)) {
-                p.returning = true;
-                // Reset hit list to allow hitting enemies again on way back
-                p.hitTargets = [];
-              }
-            } else {
-              // Homing Return
-              const angle = Math.atan2(owner.y - p.y, owner.x - p.x);
-              const returnSpeed = 1200;
-              p.vx = Math.cos(angle) * returnSpeed;
-              p.vy = Math.sin(angle) * returnSpeed;
-
-              if (dist < 30) {
-                this.projectiles.splice(i, 1);
-                continue; // Caught
-              }
-            }
-          }
-
-          // BLOCK BULLETS (Destroy enemy projectiles)
-          for (const other of this.projectiles) {
-            if (other === p) continue;
-            if (other.ownerId === p.ownerId) continue; // Don't block ally shots
-            if (other.type === "BOOMERANG") continue; // Don't block other boomerangs?
-
-            const pdx = p.x - other.x;
-            const pdy = p.y - other.y;
-            const pDist = Math.sqrt(pdx * pdx + pdy * pdy);
-
-            if (pDist < p.radius + 15) { // Radius check
-              other.life = -1; // Destroy enemy bullet
-              // Visual Effect?
-              this.io.emit("visual_effect", {
-                type: "hit",
-                x: other.x,
-                y: other.y,
-                color: "#ffd700"
-              });
-            }
-          }
-        }
 
         // FRICTION LOGIC (Techno Mines)
         if (p.friction) {
@@ -1002,21 +930,6 @@ class GameServer {
               damage += (attacker.powerCores || 0) * 9;
             }
 
-            // MARKER DAMAGE AMPLIFICATION
-            if (player.isMarked) {
-              damage *= 1.5;
-            }
-
-            // APPLY MARK
-            if (p.effect === "MARK") {
-              player.isMarked = true;
-              // Refresh mark timer
-              if (player.markTimeout) clearTimeout(player.markTimeout);
-              player.markTimeout = setTimeout(() => {
-                player.isMarked = false;
-              }, 5000); // 5 Seconds Mark
-            }
-
             // HIT EFFECT
             this.io.emit("visual_effect", {
               type: "hit",
@@ -1031,41 +944,6 @@ class GameServer {
               const ratio = Math.max(0, p.life / p.maxLife);
               const distFactor = 1.0 - ratio;
               damage = damage * (1 + distFactor * 0.5);
-            }
-
-            // BOOMERANG LOGIC (Aegis)
-            if (p.type === "BOOMERANG") {
-              // Init Hit List
-              if (!p.hitTargets) p.hitTargets = [];
-
-              // Check if already hit this pass
-              if (p.hitTargets.includes(id)) {
-                // Already hit this player, ignore damage
-                continue;
-              }
-
-              // Register Hit
-              p.hitTargets.push(id);
-
-              // Apply SLOW (80% Slow for 2s? Or less?)
-              // User said "rallenti". Let's do 50% slow.
-              player.speed = player.baseSpeed * 0.5;
-              player.isSlowed = true; // Use existing flag if any
-              if (player.slowTimeout) clearTimeout(player.slowTimeout);
-              player.slowTimeout = setTimeout(() => {
-                player.speed = player.baseSpeed;
-                player.isSlowed = false;
-              }, 2000);
-
-              // Apply Damage
-              player.hp -= damage;
-
-              // Check Death
-              if (player.hp <= 0) this.handlePlayerDeath(player, p.ownerId);
-
-              // DO NOT SPLICE (Penetrate)
-              // DO NOT BREAK (Continue checking other players if overlapped)
-              continue;
             }
 
             // FREEZE EFFECT
