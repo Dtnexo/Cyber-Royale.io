@@ -72,7 +72,10 @@ class GameServer {
               if (p.username === username) {
                 const oldSocket = this.io.sockets.sockets.get(pid);
                 if (oldSocket) {
-                  oldSocket.emit("error_message", "Logged in from another location.");
+                  oldSocket.emit(
+                    "error_message",
+                    "Logged in from another location."
+                  );
                   oldSocket.disconnect(true);
                 }
                 this.players.delete(pid);
@@ -259,7 +262,15 @@ class GameServer {
           const result = player.useSkill();
           if (result) {
             const items = Array.isArray(result) ? result : [result];
+
+            // POWER CORE SCALING (Arena)
+            const multiplier = 1 + (player.powerCores || 0) * 0.1;
+
             items.forEach((item) => {
+              if (item.damage) {
+                item.damage = Math.floor(item.damage * multiplier);
+              }
+
               if (item.type === "MINE") {
                 this.entities.push(item);
                 // Mine Lifetime
@@ -277,7 +288,6 @@ class GameServer {
               } else if (
                 item.type === "PROJECTILE" ||
                 item.type === "LAVA_WAVE" ||
-
                 item.type === "BLACK_HOLE_SHOT" ||
                 item.type === "SNIPER_SHOT"
               ) {
@@ -458,7 +468,7 @@ class GameServer {
       this.players.forEach((player) => {
         // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "New Heroes invisible on kill")
         if (player.hero.name !== "Mirage" && player.hero.name !== "Shadow") {
-            player.invisible = false;
+          player.invisible = false;
         }
         // SAFEGUARD: NaN HP check
         if (isNaN(player.hp)) player.hp = player.maxHp;
@@ -504,6 +514,9 @@ class GameServer {
               username: player.username,
               maxSkillCD: player.hero.stats.cooldown,
               kills: player.kills,
+              teleportMarker: player.teleportMarker
+                ? { x: player.teleportMarker.x, y: player.teleportMarker.y }
+                : null,
             });
             return;
           }
@@ -580,36 +593,46 @@ class GameServer {
                 const maxForce = 1000 * (1 - dist / blastRadius) + 200;
                 const steps = 8;
                 const stepDist = maxForce / steps;
-                
+
                 let safeX = target.x;
                 let safeY = target.y;
                 const cos = Math.cos(angle);
                 const sin = Math.sin(angle);
-                
+
                 const obstacles = MapData.obstacles || [];
 
                 for (let s = 1; s <= steps; s++) {
-                    const checkX = target.x + cos * (stepDist * s);
-                    const checkY = target.y + sin * (stepDist * s);
-                    let hitsWall = false;
-                    
-                    // Map Bounds
-                    if (checkX < 50 || checkX > MapData.width - 50 || checkY < 50 || checkY > MapData.height - 50) hitsWall = true;
-                    
-                    // Obstacles
-                    if (!hitsWall) {
-                        for (const obs of obstacles) {
-                            if (checkX > obs.x && checkX < obs.x + obs.w &&
-                                checkY > obs.y && checkY < obs.y + obs.h) {
-                                hitsWall = true;
-                                break;
-                            }
-                        }
+                  const checkX = target.x + cos * (stepDist * s);
+                  const checkY = target.y + sin * (stepDist * s);
+                  let hitsWall = false;
+
+                  // Map Bounds
+                  if (
+                    checkX < 50 ||
+                    checkX > MapData.width - 50 ||
+                    checkY < 50 ||
+                    checkY > MapData.height - 50
+                  )
+                    hitsWall = true;
+
+                  // Obstacles
+                  if (!hitsWall) {
+                    for (const obs of obstacles) {
+                      if (
+                        checkX > obs.x &&
+                        checkX < obs.x + obs.w &&
+                        checkY > obs.y &&
+                        checkY < obs.y + obs.h
+                      ) {
+                        hitsWall = true;
+                        break;
+                      }
                     }
-                    
-                    if (hitsWall) break;
-                    safeX = checkX;
-                    safeY = checkY;
+                  }
+
+                  if (hitsWall) break;
+                  safeX = checkX;
+                  safeY = checkY;
                 }
                 target.x = safeX;
                 target.y = safeY;
@@ -619,18 +642,68 @@ class GameServer {
                   const killer = this.players.get(player.id);
                   if (killer) killer.kills++;
                   target.isDead = true;
-                  
+
                   // Set Killer Info for "You Died" Screen
                   target.killedBy = player.username;
                   target.killedByHero = player.hero.name;
 
                   target.respawnTime = Date.now() + 5000;
-                  this.io.emit("player_died", { 
-                    id: pid, 
-                    killerId: player.id, 
+                  this.io.emit("player_died", {
+                    id: pid,
+                    killerId: player.id,
                     killerName: player.username,
-                    name: target.username // Added for Kill Feed
+                    name: target.username, // Added for Kill Feed
                   });
+                }
+              }
+            }
+          }
+        }
+
+        // STORM HERO LOGIC (Tesla Coil)
+        // Same logic as BattleRoyaleManager, ported to Arena
+        if (player.stormActive) {
+          if (!player.lastStormZap) player.lastStormZap = 0;
+          const now = Date.now();
+          if (now - player.lastStormZap >= 100) {
+            // Fast Tick (0.1s)
+            player.lastStormZap = now;
+
+            // Find ALL enemies in range
+            const targets = [];
+            const range = 300;
+
+            for (const [tid, target] of this.players) {
+              if (tid === player.id || target.isDead) continue;
+
+              const dist = Math.hypot(target.x - player.x, target.y - player.y);
+              if (dist < range) {
+                targets.push(target);
+              }
+            }
+
+            // CHAOTIC STORM: Chance to zap each target independently
+            if (targets.length > 0) {
+              for (const target of targets) {
+                // 35% chance per 0.1s ~ 3.5 hits/sec * 35 dmg = ~122 DPS (Stochastic)
+                if (Math.random() < 0.35) {
+                  const multiplier = 1 + (player.powerCores || 0) * 0.1;
+                  const damage = 35 * multiplier;
+                  target.takeDamage(damage);
+
+                  // Visual
+                  this.io.to("game_room").emit("visual_effect", {
+                    type: "lightning_zap",
+                    x1: player.x,
+                    y1: player.y,
+                    x2: target.x,
+                    y2: target.y,
+                    color: "#00F3FF",
+                  });
+
+                  if (target.hp <= 0 && !target.isDead) {
+                    this.handlePlayerDeath(target, player.id);
+                  }
                 }
               }
             }
@@ -676,6 +749,9 @@ class GameServer {
           username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
           kills: player.kills,
+          teleportMarker: player.teleportMarker
+            ? { x: player.teleportMarker.x, y: player.teleportMarker.y }
+            : null,
         });
       });
 
@@ -705,7 +781,8 @@ class GameServer {
               break;
             }
           }
-        } else if (ent.type === "DECOY") { }
+        } else if (ent.type === "DECOY") {
+        }
       }
 
       // 2. Update Projectiles
@@ -776,15 +853,21 @@ class GameServer {
               ) {
                 // LOGICAL BOUNCE (AABB Reflection)
                 const pRadius = 5;
-                const ox = (obs.w / 2 + pRadius) - Math.abs((pRect.x + 5) - (obs.x + obs.w / 2));
-                const oy = (obs.h / 2 + pRadius) - Math.abs((pRect.y + 5) - (obs.y + obs.h / 2));
+                const ox =
+                  obs.w / 2 +
+                  pRadius -
+                  Math.abs(pRect.x + 5 - (obs.x + obs.w / 2));
+                const oy =
+                  obs.h / 2 +
+                  pRadius -
+                  Math.abs(pRect.y + 5 - (obs.y + obs.h / 2));
 
                 if (ox < oy) {
-                   p.vx = -p.vx * 0.7; // Bounce X
-                   p.x += (pRect.x + 5 < obs.x + obs.w / 2) ? -ox : ox;
+                  p.vx = -p.vx * 0.7; // Bounce X
+                  p.x += pRect.x + 5 < obs.x + obs.w / 2 ? -ox : ox;
                 } else {
-                   p.vy = -p.vy * 0.7; // Bounce Y
-                   p.y += (pRect.y + 5 < obs.y + obs.h / 2) ? -oy : oy;
+                  p.vy = -p.vy * 0.7; // Bounce Y
+                  p.y += pRect.y + 5 < obs.y + obs.h / 2 ? -oy : oy;
                 }
 
                 hitWall = false; // Don't destroy
@@ -894,10 +977,10 @@ class GameServer {
           const lenSq = labX * labX + labY * labY;
           let t = 0;
           if (lenSq > 0) {
-             t = (lacX * labX + lacY * labY) / lenSq;
-             t = Math.max(0, Math.min(1, t));
+            t = (lacX * labX + lacY * labY) / lenSq;
+            t = Math.max(0, Math.min(1, t));
           }
-          
+
           // Closest point on segment
           const closetX = ax + t * labX;
           const closetY = ay + t * labY;

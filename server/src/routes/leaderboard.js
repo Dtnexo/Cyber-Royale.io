@@ -4,10 +4,12 @@ const { User } = require("../models");
 
 router.get("/", async (req, res) => {
   try {
+    const type = req.query.type === "wins" ? "brWins" : "kills";
+
     const users = await User.findAll({
-      order: [["kills", "DESC"]],
+      order: [[type, "DESC"]],
       limit: 10,
-      attributes: ["username", "kills", "coins"], // Only send safe data
+      attributes: ["username", "kills", "brWins", "coins"], // Added brWins
     });
     res.json(users);
   } catch (err) {

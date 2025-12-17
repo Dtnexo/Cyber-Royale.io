@@ -79,10 +79,7 @@ class BattleRoyaleManager {
       });
 
       // Reset timer if we drop below min players
-      if (
-        this.queue.length < this.MIN_PLAYERS_TO_START &&
-        this.queueTimer
-      ) {
+      if (this.queue.length < this.MIN_PLAYERS_TO_START && this.queueTimer) {
         clearInterval(this.queueTimer);
         this.queueTimer = null;
         this.io.to("br_lobby").emit("queue_status", "Waiting for players...");
@@ -245,7 +242,16 @@ class BattleRoyaleManager {
       const result = p.useSkill();
       if (result) {
         const results = Array.isArray(result) ? result : [result];
-        results.forEach((item) => this.addEntityOrProjectile(item));
+
+        // POWER CORE SCALING (User Request: "les cores augmente les dégats des pouvoirs")
+        const multiplier = 1 + (p.powerCores || 0) * 0.1; // 10% per Core
+
+        results.forEach((item) => {
+          if (item.damage) {
+            item.damage = Math.floor(item.damage * multiplier);
+          }
+          this.addEntityOrProjectile(item);
+        });
       }
     }
   }
@@ -279,18 +285,48 @@ class BattleRoyaleManager {
 
         if (dist < item.radius) {
           // Knockback
+          // Knockback Physics (Step Check)
           const angle = Math.atan2(dy, dx);
           const force = item.knockback;
+          const steps = 10;
+          let finalX = p.x;
+          let finalY = p.y;
 
-          let nx = p.x + Math.cos(angle) * force;
-          let ny = p.y + Math.sin(angle) * force;
+          // BR MODE: Use Global Map Obstacles
+          const obstacles = MapDataBR.obstacles || [];
 
-          // Clamp
-          nx = Math.max(0, Math.min(4000, nx));
-          ny = Math.max(0, Math.min(4000, ny));
+          for (let s = 1; s <= steps; s++) {
+            const t = s / steps;
+            const tx = p.x + Math.cos(angle) * force * t;
+            const ty = p.y + Math.sin(angle) * force * t;
 
-          p.x = nx;
-          p.y = ny;
+            // Check Collision for this step
+            const pRect = { x: tx - 20, y: ty - 20, w: 40, h: 40 };
+            let hit = false;
+
+            for (const obs of obstacles) {
+              if (
+                pRect.x < obs.x + obs.w &&
+                pRect.x + pRect.w > obs.x &&
+                pRect.y < obs.y + obs.h &&
+                pRect.y + pRect.h > obs.y
+              ) {
+                hit = true;
+                break;
+              }
+            }
+
+            if (hit) break; // Stop at previous step (Block at wall face)
+            finalX = tx;
+            finalY = ty;
+          }
+
+          // Clamp to Map
+          finalX = Math.max(0, Math.min(MapDataBR.width, finalX));
+          finalY = Math.max(0, Math.min(MapDataBR.height, finalY));
+
+          p.x = finalX;
+          p.y = finalY;
 
           // Damage
           p.hp -= item.damage;
@@ -338,95 +374,80 @@ class BattleRoyaleManager {
 
       // SUPERNOVA LOGIC
       if (p.supernovaStartTime) {
-        if (Date.now() - p.supernovaStartTime >= 500) {
-          delete p.supernovaStartTime;
-          p.cooldowns.skill = 8000; // Reset Cooldown
+        if (Date.now() - p.supernovaStartTime >= 800) {
+          // Slight delay sync with animation (was 500, new animation is ~1s, lets trigger blast at 0.8s)
 
-          const blastRadius = 400;
-          // Visual
           this.io.to("br_lobby").emit("visual_effect", {
             type: "supernova_blast",
             x: p.x,
             y: p.y,
-            radius: blastRadius,
           });
 
           // Damage
-          this.players.forEach((target) => {
-            if (target.id === p.id || !target.alive) return;
-            const dx = target.x - p.x;
-            const dy = target.y - p.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+          const multiplier = 1 + (p.powerCores || 0) * 0.1;
+          const damage = 60 * multiplier;
 
-            if (dist < blastRadius) {
-              // Scaled Damage
-              let dmg = 0;
-              if (dist < 80) dmg = 9999; // One Shot
-              else {
-                const maxD = 100, // Nerfed from 120
-                  minD = 10; // Nerfed from 30
-                const ratio = (dist - 80) / (blastRadius - 80);
-                dmg = maxD - Math.max(0, Math.min(1, ratio)) * (maxD - minD);
-              }
-              target.takeDamage(dmg);
+          this.addEntityOrProjectile({
+            type: "SHOCKWAVE",
+            x: p.x,
+            y: p.y,
+            ownerId: p.id,
+            radius: 350,
+            damage: damage,
+            knockback: 400,
+            color: "#da70d6",
+          });
 
-              // Safe Push Logic (Raycast against Obstacles)
-              const angle = Math.atan2(dy, dx);
-              const maxForce = 1000 * (1 - dist / blastRadius) + 200;
-              const steps = 8; // Precision
-              const stepDist = maxForce / steps;
-              
-              let safeX = target.x;
-              let safeY = target.y;
-              const cos = Math.cos(angle);
-              const sin = Math.sin(angle);
-              
-              const obstacles = this.obstacles || []; // Safe fallback
+          delete p.supernovaStartTime;
+        }
+      }
 
-              for (let s = 1; s <= steps; s++) {
-                  const checkX = target.x + cos * (stepDist * s);
-                  const checkY = target.y + sin * (stepDist * s);
-                  let hitsWall = false;
-                  
-                  // Map Bounds
-                  if (checkX < 50 || checkX > 3950 || checkY < 50 || checkY > 3950) hitsWall = true;
-                  
-                  // Obstacles
-                  if (!hitsWall) {
-                      for (const obs of obstacles) {
-                          if (checkX > obs.x && checkX < obs.x + obs.w &&
-                              checkY > obs.y && checkY < obs.y + obs.h) {
-                              hitsWall = true;
-                              break;
-                          }
-                      }
-                  }
-                  
-                  if (hitsWall) break;
-                  safeX = checkX;
-                  safeY = checkY;
-              }
-              target.x = safeX;
-              target.y = safeY;
+      // STORM HERO LOGIC (Tesla Coil)
+      if (p.stormActive) {
+        if (!p.lastStormZap) p.lastStormZap = 0;
+        const now = Date.now();
+        if (now - p.lastStormZap >= 100) {
+          // Fast Tick (0.1s)
+          p.lastStormZap = now;
 
-              // Explicit Kill Check (Fixes Missing Feed)
-              if (target.hp <= 0 && target.alive) {
-                  target.alive = false;
-                  target.hp = 0;
-                  this.spawnItem(target.x, target.y); // Drop Core
-                  // Emit event
-                  this.io.to("br_lobby").emit("player_died", { 
-                       id: target.id, 
-                       killerId: p.id,
-                       name: target.username,
-                       killerName: p.username
-                  });
-                   // Stats
-                  if (p.kills === undefined) p.kills = 0;
-                  p.kills++;
+          // Find ALL enemies in range
+          const targets = [];
+          const range = 300;
+
+          for (const [tid, target] of this.players) {
+            if (tid === p.id || !target.alive) continue;
+
+            const dist = Math.hypot(target.x - p.x, target.y - p.y);
+            if (dist < range) {
+              targets.push(target);
+            }
+          }
+
+          // CHAOTIC STORM: Chance to zap each target independently
+          if (targets.length > 0) {
+            for (const target of targets) {
+              // 35% chance per 0.1s ~ 3.5 hits/sec
+              if (Math.random() < 0.35) {
+                const multiplier = 1 + (p.powerCores || 0) * 0.1;
+                const damage = 35 * multiplier;
+                target.takeDamage(damage);
+
+                // Visual
+                this.io.to("br_lobby").emit("visual_effect", {
+                  type: "lightning_zap",
+                  x1: p.x,
+                  y1: p.y,
+                  x2: target.x,
+                  y2: target.y,
+                  color: "#00F3FF",
+                });
+
+                if (target.hp <= 0 && target.alive) {
+                  this.killPlayer(target, p.id);
+                }
               }
             }
-          });
+          }
         }
       }
     });
@@ -464,7 +485,12 @@ class BattleRoyaleManager {
         // Shoot
         if (p.keys.space) {
           const proj = p.shoot();
-          if (proj) this.addEntityOrProjectile(proj);
+          if (proj) {
+            // POWER CORE SCALING (Primary Fire & Weapon Buffs like Techno/Blaze)
+            const multiplier = 1 + (p.powerCores || 0) * 0.1;
+            if (proj.damage) proj.damage = Math.floor(proj.damage * multiplier);
+            this.addEntityOrProjectile(proj);
+          }
         }
 
         // Death Check (Zone or DoT)
@@ -494,7 +520,9 @@ class BattleRoyaleManager {
         heroClass: p.hero.class,
         angle: p.mouseAngle,
         isDead: !p.alive,
-        powerCores: p.powerCores,
+        isDead: !p.alive,
+        powerCores: p.powerCores || 0,
+        username: p.username,
         username: p.username,
         color: p.color,
         shield: p.shieldActive,
@@ -505,7 +533,15 @@ class BattleRoyaleManager {
         skillCD: p.cooldowns.skill,
         shootCD: p.cooldowns.shoot, // Exposure for UI/Visuals
         maxSkillCD: p.hero.stats.cooldown,
+        teleportMarker: p.teleportMarker
+          ? { x: p.teleportMarker.x, y: p.teleportMarker.y }
+          : null,
       });
+
+      // Debug log for Ghost marker
+      if (p.hero.name === "Ghost" && p.teleportMarker) {
+        console.log("[SERVER] Sending marker to client:", p.teleportMarker);
+      }
     });
 
     // Calc Alive
@@ -518,14 +554,12 @@ class BattleRoyaleManager {
     // PROJECTILES
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
-      
+
       // FRICTION (Mines)
       if (proj.friction) {
         proj.vx *= 0.9; // Rapid deceleration
         proj.vy *= 0.9;
       }
-
-
 
       const prevX = proj.x;
       const prevY = proj.y; // Store previous position for Raycast
@@ -547,34 +581,40 @@ class BattleRoyaleManager {
       const pRect = { x: proj.x, y: proj.y, w: 10, h: 10 }; // Approx
 
       if (!proj.penetrateWalls) {
-      for (const obs of obstacles) {
-        // STANDARD AABB
-        if (
-          proj.x < obs.x + obs.w &&
-          proj.x + 10 > obs.x &&
-          proj.y < obs.y + obs.h &&
-          proj.y + 10 > obs.y
-        ) {
-        if (proj.friction) {
-             // TECHNO MINE BOUNCE (AABB Reflection)
-             const pRadius = 5; 
-             const ox = (obs.w / 2 + pRadius) - Math.abs((proj.x + 5) - (obs.x + obs.w / 2));
-             const oy = (obs.h / 2 + pRadius) - Math.abs((proj.y + 5) - (obs.y + obs.h / 2));
+        for (const obs of obstacles) {
+          // STANDARD AABB
+          if (
+            proj.x < obs.x + obs.w &&
+            proj.x + 10 > obs.x &&
+            proj.y < obs.y + obs.h &&
+            proj.y + 10 > obs.y
+          ) {
+            if (proj.friction) {
+              // TECHNO MINE BOUNCE (AABB Reflection)
+              const pRadius = 5;
+              const ox =
+                obs.w / 2 +
+                pRadius -
+                Math.abs(proj.x + 5 - (obs.x + obs.w / 2));
+              const oy =
+                obs.h / 2 +
+                pRadius -
+                Math.abs(proj.y + 5 - (obs.y + obs.h / 2));
 
-             if (ox < oy) {
+              if (ox < oy) {
                 proj.vx = -proj.vx * 0.7; // Bounce X
-                proj.x += (proj.x < obs.x + obs.w / 2) ? -ox : ox;
-             } else {
+                proj.x += proj.x < obs.x + obs.w / 2 ? -ox : ox;
+              } else {
                 proj.vy = -proj.vy * 0.7; // Bounce Y
-                proj.y += (proj.y < obs.y + obs.h / 2) ? -oy : oy;
-             }
-             // Don't destroy
-             break;
-        } else {
-           wallHit = true;
-           break;
-        }
-        }
+                proj.y += proj.y < obs.y + obs.h / 2 ? -oy : oy;
+              }
+              // Don't destroy
+              break;
+            } else {
+              wallHit = true;
+              break;
+            }
+          }
         }
       } // End penetrate check
 
@@ -642,7 +682,7 @@ class BattleRoyaleManager {
             // Push out slightly to prevent sticking
             proj.x += proj.vx * dt * 2;
             proj.y += proj.vy * dt * 2;
-            
+
             entityHit = true; // Bounced, but keeps living
             break; // Handle one bounce per frame to avoid chaos
           }
@@ -653,7 +693,7 @@ class BattleRoyaleManager {
       // PLAYER COLLISION (Raycast for Anti-Tunneling)
       for (const [pid, target] of this.players) {
         if (pid === proj.ownerId || !target.alive) continue;
-        
+
         // RAYCAST CHECK
         // Segment: (prevX, prevY) -> (proj.x, proj.y)
         // Circle: (target.x, target.y) Radius 35
@@ -673,13 +713,13 @@ class BattleRoyaleManager {
         const lenSq = labX * labX + labY * labY;
         let t = 0;
         if (lenSq > 0) {
-            t = (lacX * labX + lacY * labY) / lenSq;
-            t = Math.max(0, Math.min(1, t));
+          t = (lacX * labX + lacY * labY) / lenSq;
+          t = Math.max(0, Math.min(1, t));
         }
         const closetX = ax + t * labX;
         const closetY = ay + t * labY;
-        
-        const distSq = (cx - closetX)**2 + (cy - closetY)**2;
+
+        const distSq = (cx - closetX) ** 2 + (cy - closetY) ** 2;
 
         if (distSq < r * r) {
           // CALC DAMAGE (Scaled by Attacker Cores)
@@ -800,7 +840,7 @@ class BattleRoyaleManager {
       }
     }
 
-      // Drop Cores
+    // Drop Cores
     const coresToDrop = Math.max(1, Math.floor(victim.powerCores / 2));
     for (let i = 0; i < coresToDrop; i++) {
       this.spawnItem(
@@ -829,7 +869,9 @@ class BattleRoyaleManager {
 
   forceRemovePlayer(username) {
     // 1. Queue
-    const qIdx = this.queue.findIndex((q) => q.playerData.username === username);
+    const qIdx = this.queue.findIndex(
+      (q) => q.playerData.username === username
+    );
     if (qIdx !== -1) {
       const s = this.queue[qIdx].socket;
       s.emit("error_message", "New session started.");
@@ -848,12 +890,12 @@ class BattleRoyaleManager {
           // Found them.
           const s = this.io.sockets.sockets.get(pid);
           if (s) s.disconnect(true);
-          
+
           if (this.state === "countdown") {
-             this.players.delete(pid);
+            this.players.delete(pid);
           } else {
-             this.killPlayer(p, null);
-             // Trigger update check next loop
+            this.killPlayer(p, null);
+            // Trigger update check next loop
           }
         }
       }
@@ -866,8 +908,8 @@ class BattleRoyaleManager {
     let aliveCount = 0;
     this.players.forEach((p) => {
       if (p.alive) {
-          winner = p;
-          aliveCount++;
+        winner = p;
+        aliveCount++;
       }
     });
 
@@ -883,9 +925,10 @@ class BattleRoyaleManager {
           .then((u) => {
             if (u) {
               u.coins += earned;
+              u.brWins = (u.brWins || 0) + 1; // Increment Wins
               u.save();
               console.log(
-                `[BR_WIN] Saved ${earned} coins for Winner ${u.username}`
+                `[BR_WIN] Saved ${earned} coins & Win for Winner ${u.username}`
               );
             }
           })
@@ -901,7 +944,7 @@ class BattleRoyaleManager {
     console.log("[BR] Winner:", winnerName);
 
     // If 0 players alive (Everyone left), reset QUICKLY
-    const resetTime = (aliveCount === 0) ? 1000 : 10000;
+    const resetTime = aliveCount === 0 ? 1000 : 10000;
 
     setTimeout(() => {
       this.players.clear();

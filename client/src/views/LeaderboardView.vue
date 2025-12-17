@@ -7,10 +7,13 @@ const router = useRouter();
 const leaders = ref([]);
 const loading = ref(true);
 const error = ref(null);
+const leaderboardMode = ref("kills"); // 'kills' or 'wins'
 
-onMounted(async () => {
+const fetchLeaderboard = async () => {
+  loading.value = true;
+  error.value = null;
   try {
-    const res = await api.get("/leaderboard");
+    const res = await api.get(`/leaderboard?type=${leaderboardMode.value}`);
     leaders.value = res.data;
   } catch (err) {
     error.value = "Unable to retrieve Global Rankings.";
@@ -18,6 +21,16 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const setMode = (mode) => {
+  if (leaderboardMode.value === mode) return;
+  leaderboardMode.value = mode;
+  fetchLeaderboard();
+};
+
+onMounted(() => {
+  fetchLeaderboard();
 });
 
 const goBack = () => {
@@ -29,9 +42,26 @@ const goBack = () => {
   <div class="leaderboard-page">
     <div class="header">
       <button @click="goBack" class="btn btn-secondary">BACK</button>
-      <h1 class="neon-text">GLOBAL RANKINGS</h1>
+      <div class="title-section">
+        <h1 class="neon-text">GLOBAL RANKINGS</h1>
+        <div class="toggles">
+          <button
+            class="toggle-btn"
+            :class="{ active: leaderboardMode === 'kills' }"
+            @click="setMode('kills')"
+          >
+            ELIMINATIONS
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: leaderboardMode === 'wins' }"
+            @click="setMode('wins')"
+          >
+            Battle Royale
+          </button>
+        </div>
+      </div>
       <div style="width: 80px"></div>
-      <!-- Spacer -->
     </div>
 
     <div class="content-container">
@@ -42,7 +72,9 @@ const goBack = () => {
         <div class="rank-header">
           <span>RANK</span>
           <span>OPERATIVE</span>
-          <span>CONFIRMED KILLS</span>
+          <span>{{
+            leaderboardMode === "kills" ? "CONFIRMED KILLS" : "TOTAL WINS"
+          }}</span>
           <span>CREDITS</span>
         </div>
 
@@ -54,7 +86,12 @@ const goBack = () => {
         >
           <span class="rank">#{{ index + 1 }}</span>
           <span class="name">{{ user.username }}</span>
-          <span class="kills">{{ user.kills }}</span>
+          <span
+            class="kills"
+            :class="{ 'wins-col': leaderboardMode === 'wins' }"
+          >
+            {{ leaderboardMode === "kills" ? user.kills : user.brWins || 0 }}
+          </span>
           <span class="coins">{{ user.coins }}</span>
         </div>
       </div>
@@ -104,6 +141,13 @@ const goBack = () => {
   backdrop-filter: blur(10px);
 }
 
+.title-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+}
+
 .header h1 {
   font-size: 2rem;
   font-weight: 800;
@@ -111,6 +155,35 @@ const goBack = () => {
   color: #fff;
   text-shadow: 0 0 10px var(--primary);
   margin: 0;
+}
+
+.toggles {
+  display: flex;
+  gap: 10px;
+}
+
+.toggle-btn {
+  background: transparent;
+  border: 1px solid var(--primary-dim);
+  color: #888;
+  padding: 5px 15px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 0.8rem;
+}
+
+.toggle-btn:hover {
+  color: #fff;
+  border-color: #fff;
+}
+
+.toggle-btn.active {
+  background: var(--primary);
+  color: #000;
+  border-color: var(--primary);
+  box-shadow: 0 0 10px var(--primary);
 }
 
 .content-container {
@@ -187,6 +260,11 @@ const goBack = () => {
   color: #ff3333;
   font-weight: bold;
   text-shadow: 0 0 5px rgba(255, 51, 51, 0.5);
+}
+
+.wins-col {
+  color: #ffd700; /* Gold for wins */
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
 }
 
 .coins {

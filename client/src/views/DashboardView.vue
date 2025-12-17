@@ -42,26 +42,32 @@ const getHeroDesc = (name) => {
   const descs = {
     // Tanks
     Vanguard: "ABILITY: Reflector Shield (Invulnerable 3s)",
-    Titan: "ABILITY: Juggernaut (+HP, -Speed)",
-    Brawler: "ABILITY: Berserker (Rapid Fire, +Speed)",
-    Goliath: "ABILITY: Fortress (Rooted, Heal, Invulnerable)",
+    Titan: "ABILITY: Juggernaut (Heal & Resistance)",
+    Brawler: "ABILITY: Berserker (Rapid Fire & Speed)",
+    Goliath: "ABILITY: Fortress (Shield & Repair)",
+    Citadel: "ABILITY: Ironclad (Invulnerability)",
 
-    // Speed
-    Spectre: "ABILITY: Blink (Teleport)",
+    // Speed / Mobility
+    Spectre: "ABILITY: Phantom Dash (High Speed Phase)",
     Volt: "ABILITY: Overload (Super Speed)",
-    Ghost: "ABILITY: Phasing (Walk through walls)",
+    Ghost: "ABILITY: Phasing (Wall Pass-Through)",
+    Jumper: "ABILITY: Blink Drive (Short-Range Teleport)",
+    Mirage: "ABILITY: Holographic Decoy (Clone & Stealth)",
 
-    // Support
-    Techno: "ABILITY: Proximity Mine",
-    Engineer: "ABILITY: Force Field (Block shots)",
-    Medic: "ABILITY: Regenerator (Area Heal)",
+    // Support / defense
+    Techno: "ABILITY: Mine Layer (Explosive Traps)",
+    Engineer: "ABILITY: Force Field (Deployable Barrier)",
+    Medic: "ABILITY: Nano-Repair (Self Healing)",
 
-    // Damage
-    Blaze: "ABILITY: Rapid Fire",
-    Frost: "ABILITY: Freeze Shot (Freezes Enemy)",
-    Sniper: "ABILITY: Railgun (High Dmg, Fast Shot)",
-    Shadow: "ABILITY: Stealth (Invisible 5s)",
-    Nova: "ABILITY: Nova Blast (Radial Attack)",
+    // Damage / Offense
+    Blaze: "ABILITY: Rapid Fire (High Fire Rate)",
+    Frost: "ABILITY: Cryo Rounds (Freezing Shots)",
+    Sniper: "ABILITY: Railgun (Piercing High Damage)",
+    Shadow: "ABILITY: Optical Camouflage (Invisibility)",
+    Nova: "ABILITY: Supernova (Explosive Radial Blast)",
+    Magma: "ABILITY: Lava Wave (Triple Projectile Fan)",
+    Storm: "ABILITY: Tesla Storm (Chain Lightning & Speed)",
+    Viper: "ABILITY: Viper's Kiss (Poisonous Rounds)",
   };
   return descs[name] || "ABILITY: Classifier Error";
 };

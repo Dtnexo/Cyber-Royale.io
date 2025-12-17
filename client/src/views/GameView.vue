@@ -78,6 +78,67 @@ const triggerFlash = (alpha) => {
   flashAlpha = alpha;
 };
 
+// === LIGHTNING VFX ===
+let lightnings = [];
+
+const createLightning = (x1, y1, x2, y2, color) => {
+  // Generate jagged points
+  const points = [];
+  const steps = 10;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  points.push({ x: x1, y: y1 });
+
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const sway = (Math.random() - 0.5) * 40; // Zigzag magnitude
+    points.push({
+      x: x1 + dx * t + sway,
+      y: y1 + dy * t + sway,
+    });
+  }
+  points.push({ x: x2, y: y2 });
+
+  lightnings.push({
+    points,
+    color: color || "#FFF",
+    life: 10, // Frames (Short burst)
+    width: 4,
+  });
+};
+
+const drawLightnings = (ctx) => {
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  for (let i = lightnings.length - 1; i >= 0; i--) {
+    const l = lightnings[i];
+    if (l.life <= 0) {
+      lightnings.splice(i, 1);
+      continue;
+    }
+
+    ctx.beginPath();
+    ctx.strokeStyle = l.color;
+    ctx.lineWidth = l.width * (l.life / 10); // Fade width
+    ctx.shadowColor = l.color;
+    ctx.shadowBlur = 15;
+
+    const p0 = l.points[0];
+    ctx.moveTo(p0.x - cameraX, p0.y - cameraY);
+
+    for (let j = 1; j < l.points.length; j++) {
+      const p = l.points[j];
+      ctx.lineTo(p.x - cameraX, p.y - cameraY);
+    }
+    ctx.stroke();
+
+    l.life--;
+  }
+  ctx.shadowBlur = 0;
+};
+
 // Assets
 const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
@@ -166,17 +227,17 @@ onMounted(async () => {
     queuePlayers.value = data.players || [];
     // Don't clear customStatus here to preserve "leave" messages briefly if we want
     // But usually queue update overrides. Let's keep it simple.
-    // customStatus.value = ""; 
+    // customStatus.value = "";
   });
 
   socket.value.on("queue_notification", (data) => {
     if (data.type === "leave") {
-       // Show who left
-       customStatus.value = data.message;
-       // Clear after 2 seconds
-       setTimeout(() => {
-          if (customStatus.value === data.message) customStatus.value = "";
-       }, 2000);
+      // Show who left
+      customStatus.value = data.message;
+      // Clear after 2 seconds
+      setTimeout(() => {
+        if (customStatus.value === data.message) customStatus.value = "";
+      }, 2000);
     }
   });
 
@@ -240,6 +301,19 @@ onMounted(async () => {
   socket.value.on("br_update", (data) => {
     // Full State Pack
     players = data.players;
+
+    // Debug: Check if any player has teleportMarker
+    const ghostPlayers = data.players.filter((p) => p.hero === "Ghost");
+    if (ghostPlayers.length > 0) {
+      console.log(
+        "[CLIENT] Ghost players received:",
+        ghostPlayers.map((p) => ({
+          id: p.id,
+          teleportMarker: p.teleportMarker,
+        }))
+      );
+    }
+
     projectiles = data.projectiles;
     entities = data.entities;
     crates = data.crates || [];
@@ -284,6 +358,14 @@ onMounted(async () => {
         }
       }
     }
+  });
+
+  // ARENA MODE: Listen to server_update (same as br_update but for Arena)
+  socket.value.on("server_update", (data) => {
+    // Same logic as br_update
+    players = data.players || [];
+    projectiles = data.projectiles || [];
+    entities = data.entities || [];
   });
 
   socket.value.on("br_rewards", (data) => {
@@ -335,7 +417,7 @@ onMounted(async () => {
       createShockwave(data.x, data.y, data.color || "#ffffff");
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
     } else if (data.type === "poison_hit") {
-      spawnExplosion(data.x, data.y, "#32cd32");
+      spawnPoisonCloud(data.x, data.y);
     } else if (data.type === "hit") {
       spawnHitSparks(data.x, data.y, data.color);
       // Sprite Flash Logic
@@ -352,13 +434,37 @@ onMounted(async () => {
       triggerFlash(0.5);
     } else if (data.type === "supernova_blast") {
       // SUPERNOVA VISUALS
-      createShockwave(data.x, data.y, "#da70d6"); // Orchid
-      spawnExplosion(data.x, data.y, "#da70d6");
-      addScreenShake(20, 20); // Heavy Shake
-      triggerFlash(0.8); // Bright Flash
+      createSupernova(data.x, data.y, "#da70d6");
+      addScreenShake(30, 30); // MAX INTENSITY
     } else if (data.type === "supernova_cast") {
-      // Charge Up Effect (Sound / Small Flash)
-      // Maybe a small reverse shockwave?
+      // CHARGE UP (Implosion)
+      shockwaves.push({
+        x: data.x,
+        y: data.y,
+        color: "#da70d6",
+        radius: 300,
+        maxRadius: 0, // SHRINKING
+        alpha: 0.5,
+        speed: -5, // Slower shrink (300 / 60 frames = 5)
+        fadeSpeed: 0.01, // Keep visible
+      });
+      // Or just standard shockwave starting big and shrinking?
+      // My drawShockwaves logic: radius += speed.
+      // If speed is negative, it shrinks.
+      // Need to ensure it starts at 300.
+      // speed needs to be: -300 / (0.8s * 60fps) = -6.
+    } else if (data.type === "lightning_zap") {
+      // TESLA STORM VISUAL
+      // Create branching lightning
+      createLightning(data.x1, data.y1, data.x2, data.y2, data.color);
+      spawnHitSparks(data.x2, data.y2, "#FFF");
+      // Screen Shake for impact
+      if (
+        data.x1 === cameraX + window.innerWidth / 2 ||
+        data.x2 === cameraX + window.innerWidth / 2
+      ) {
+        addScreenShake(5, 5);
+      }
     }
   });
 
@@ -720,14 +826,45 @@ const drawFloorDeco = (ctx) => {
     )
       return;
 
-    ctx.fillStyle = "#00ff00"; // Green Gem
+    const time = Date.now();
+    const floatY = Math.sin(time / 500) * 5;
+
+    ctx.save();
+    ctx.translate(sx, sy + floatY);
+
+    // Glow
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#00ff00";
+
+    // Diamond Shape (Core)
+    ctx.fillStyle = "#00ff00";
     ctx.beginPath();
-    ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+    ctx.moveTo(0, -10);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-8, 0);
+    ctx.closePath();
     ctx.fill();
-    // Optimized: Removed ShadowBlur, used simplified stroke
-    ctx.strokeStyle = "#fff";
+
+    // Inner White
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.moveTo(0, -5);
+    ctx.lineTo(4, 0);
+    ctx.lineTo(0, 5);
+    ctx.lineTo(-4, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Rotating Ring
+    ctx.rotate(time / 1000);
+    ctx.strokeStyle = `rgba(0, 255, 0, 0.6)`;
     ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 14 + Math.sin(time / 200) * 2, 0, Math.PI * 2); // Pulse Ring
     ctx.stroke();
+
+    ctx.restore();
   });
 };
 
@@ -758,7 +895,12 @@ const drawWalls = (ctx) => {
     // Wall Body (Solid Black to hide everything under it, e.g. bushes)
     ctx.fillStyle = "#000000";
     // Overfill to prevent sub-pixel gaps (Gray Line Glitch)
-    ctx.fillRect(screenX - 1, screenY - 1, Math.ceil(obs.w) + 2, Math.ceil(obs.h) + 2);
+    ctx.fillRect(
+      screenX - 1,
+      screenY - 1,
+      Math.ceil(obs.w) + 2,
+      Math.ceil(obs.h) + 2
+    );
 
     // Neon Glow Border (Simplified for Performance)
     if (obs.type === "WALL") {
@@ -849,6 +991,122 @@ const spawnHitSparks = (x, y, color) => {
   }
 };
 
+// === SUPERNOVA ANIMATION SYSTEM ===
+let supernovas = [];
+
+const createSupernova = (x, y, color) => {
+  supernovas.push({
+    x,
+    y,
+    color,
+    life: 0,
+    maxLife: 60, // 1 second animation
+    radius: 10,
+    maxRadius: 350,
+    rays: Array.from({ length: 12 }, () => Math.random() * Math.PI * 2), // 12 Random angles for rays
+  });
+
+  // Initial Burst Particles
+  spawnExplosion(x, y, color);
+};
+
+const spawnPoisonCloud = (x, y) => {
+  // 1. Toxic Gas Clouds (Lingering, Expanding)
+  for (let i = 0; i < 15; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 20;
+    particles.push({
+      x: x + Math.cos(angle) * dist,
+      y: y + Math.sin(angle) * dist,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5 - 0.5, // Slight upward drift
+      life: 60 + Math.random() * 40,
+      maxLife: 100,
+      color: Math.random() > 0.5 ? "#39ff14" : "#bf00ff", // Neon Green & Toxic Purple
+      type: "poison_smoke",
+      radius: 10 + Math.random() * 15, // Start large
+      alpha: 0.6,
+    });
+  }
+
+  // 2. Rising Bubbles (Fast, Popping)
+  for (let i = 0; i < 10; i++) {
+    particles.push({
+      x: x + (Math.random() - 0.5) * 30,
+      y: y + (Math.random() - 0.5) * 30,
+      vx: 0,
+      vy: -1 - Math.random() * 2, // Up
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+      color: "#adff2f", // Green Yellow
+      type: "poison_bubble",
+      radius: 2 + Math.random() * 4,
+      wobbleOffset: Math.random() * 100,
+    });
+  }
+};
+
+const drawSupernovas = (ctx) => {
+  for (let i = supernovas.length - 1; i >= 0; i--) {
+    const s = supernovas[i];
+    s.life++;
+    const progress = s.life / s.maxLife; // 0.0 to 1.0
+
+    if (progress >= 1.0) {
+      supernovas.splice(i, 1);
+      continue;
+    }
+
+    const sx = s.x - cameraX;
+    const sy = s.y - cameraY;
+
+    const currentRadius = s.maxRadius * Math.pow(progress, 0.5); // Fast start, slow end
+    const opacity = 1.0 - Math.pow(progress, 2); // Fade out towards end
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // 1. Central Core (Expanding Sphere)
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, currentRadius);
+    grad.addColorStop(0, "#fff"); // Hot center
+    grad.addColorStop(0.3, s.color);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+
+    ctx.globalAlpha = opacity * 0.8;
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, currentRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Spinning Rays (God Rays)
+    ctx.globalAlpha = opacity * 0.6;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    const rayLen = currentRadius * 1.5;
+
+    // Rotate rays slowly
+    const rotation = s.life * 0.05;
+
+    s.rays.forEach((angle) => {
+      const a = angle + rotation;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * rayLen, Math.sin(a) * rayLen);
+    });
+    ctx.stroke();
+
+    // 3. Shockwave Ring
+    ctx.globalAlpha = opacity;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2 + (1 - progress) * 5; // Thinning out
+    ctx.beginPath();
+    ctx.arc(0, 0, currentRadius * 0.8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+};
+
 // === SHOCKWAVES ===
 let shockwaves = [];
 
@@ -868,9 +1126,15 @@ const drawShockwaves = (ctx) => {
   for (let i = shockwaves.length - 1; i >= 0; i--) {
     const s = shockwaves[i];
     s.radius += s.speed;
-    s.alpha -= 0.04; // Fade out
+    // Adjustable fade or default
+    s.alpha -= s.fadeSpeed || 0.04;
 
-    if (s.alpha <= 0 || s.radius > s.maxRadius) {
+    let remove = false;
+    if (s.alpha <= 0) remove = true;
+    if (s.speed > 0 && s.radius > s.maxRadius) remove = true;
+    if (s.speed < 0 && s.radius <= 0) remove = true;
+
+    if (remove) {
       shockwaves.splice(i, 1);
       continue;
     }
@@ -896,6 +1160,16 @@ const updateParticles = () => {
     p.y += p.vy;
     p.life--;
     if (p.type === "debris") p.angle += p.rotSpeed;
+
+    // Poison Logic
+    if (p.type === "poison_smoke") {
+      p.radius += 0.15; // Expand
+      p.alpha = Math.max(0, p.life / p.maxLife); // Fade
+    }
+    if (p.type === "poison_bubble") {
+      p.x += Math.sin(Date.now() / 100 + p.wobbleOffset) * 0.5; // Wobble
+    }
+
     if (p.life <= 0) particles.splice(i, 1);
   }
 };
@@ -911,21 +1185,76 @@ const drawParticles = (ctx) => {
       ctx.rotate(p.angle);
       ctx.fillRect(-3, -3, 6, 6); // Larger
       ctx.restore();
+    } else if (p.type === "poison_smoke") {
+      // Soft Gradient Cloud
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, p.radius);
+      grad.addColorStop(0, p.color);
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+
+      ctx.globalAlpha = p.alpha * 0.7;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (p.type === "poison_bubble") {
+      // Shiny Bubble (Ring)
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Specular highlight
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(
+        sx - p.radius * 0.3,
+        sy - p.radius * 0.3,
+        p.radius * 0.2,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
     } else if (p.type === "trail") {
       // Sniper Trail Glow (User Request)
       const sx = p.x - cameraX;
       const sy = p.y - cameraY;
-      
+
       ctx.shadowBlur = 10;
       ctx.shadowColor = p.color;
-      ctx.fillStyle = p.color; 
-      
+      ctx.fillStyle = p.color;
+
       // Draw Circle for smooth trail
       ctx.beginPath();
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2); 
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
       ctx.fill();
-      
+
       ctx.shadowBlur = 0;
+    } else if (p.type === "flare") {
+      // SUPERNOVA FLARE
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      const radius = (p.size || 100) * (p.life / p.maxLife); // Shrink or Fade? Fade looks better usually.
+
+      ctx.save();
+      ctx.globalAlpha = p.life / p.maxLife;
+      // Radial Gradient for Soft Glow
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
+      grad.addColorStop(0, "#fff");
+      grad.addColorStop(0.5, p.color);
+      grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     } else {
       // Standard Spark
       ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
@@ -1022,7 +1351,7 @@ const drawProjectiles = (ctx) => {
     if (p.type === "SNIPER_SHOT") {
       const sx = Math.floor(p.x - cameraX);
       const sy = Math.floor(p.y - cameraY);
-      
+
       // Draw Bullet
       ctx.beginPath();
       ctx.arc(sx, sy, 4, 0, Math.PI * 2);
@@ -1042,21 +1371,21 @@ const drawProjectiles = (ctx) => {
       for (let i = 0; i < 5; i++) {
         // Interpolate backwards
         // Assuming 60fps delta (0.016s)
-        const dt = 0.016; 
+        const dt = 0.016;
         const offset = i / 5;
-        const bx = p.x - (p.vx * dt * offset); 
-        const by = p.y - (p.vy * dt * offset);
-        
+        const bx = p.x - p.vx * dt * offset;
+        const by = p.y - p.vy * dt * offset;
+
         particles.push({
-            x: bx,
-            y: by,
-            vx: 0,
-            vy: 0,
-            life: 90, 
-            maxLife: 90,
-            color: "rgba(0, 243, 255, 0.6)",
-            id: Date.now() + Math.random(),
-            type: "trail"
+          x: bx,
+          y: by,
+          vx: 0,
+          vy: 0,
+          life: 90,
+          maxLife: 90,
+          color: "rgba(0, 243, 255, 0.6)",
+          id: Date.now() + Math.random(),
+          type: "trail",
         });
       }
       return;
@@ -1108,9 +1437,12 @@ const drawPlayer = (ctx, p) => {
   const isMe = p.id === myId;
   const primaryColor = p.color || (isMe ? "#00ccff" : "#ff3333");
 
-  // Use Class to determine shape if specific hero not defined
+  // Resolve Hero Name robustly
+  const heroName =
+    p.heroName ||
+    (typeof p.hero === "string" ? p.hero : p.hero?.name) ||
+    "Unknown";
   const heroClass = p.heroClass || p.hero?.class || "Damage";
-  const heroName = p.heroName || p.hero?.name || "Unknown";
 
   // Emit Particles based on Hero (DISABLE if invisible and not me)
   if (Math.random() > 0.5 && (!p.invisible || p.id === myId)) {
@@ -1127,8 +1459,8 @@ const drawPlayer = (ctx, p) => {
   if (p.invisible) {
     // TRUE INVISIBILITY: No Flashing Reveal (Prevents "Skeleton" Glitch)
     if (p.id !== myId) {
-       ctx.restore();
-       return; 
+      ctx.restore();
+      return;
     }
 
     // If visible (Self or Hit), set Ghost Alpha
@@ -1138,6 +1470,87 @@ const drawPlayer = (ctx, p) => {
 
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2);
+
+  // --- TESLA STORM VISUAL ZONE (ACTIVE SKILL) ---
+  // Improved Visibility & Robust Check
+  if (p.isSkillActive && heroName === "Storm") {
+    ctx.save();
+    const radius = 300; // Reduced to 300
+    const time = Date.now() / 1000;
+
+    // Remove Player Rotation (Stable Zone)
+    ctx.rotate(-(p.angle + Math.PI / 2));
+
+    // Layer 1: Main JAGGED Electric Ring
+    ctx.save();
+    ctx.rotate(time * 2.0); // Fast Rotation
+    ctx.beginPath();
+
+    // Draw Jagged Circle
+    const segments = 40;
+    for (let i = 0; i < segments; i++) {
+      const theta = (i / segments) * Math.PI * 2;
+      // Random Jitter for Electric Look
+      const jitter = (Math.random() - 0.5) * 15;
+      const r = radius + jitter;
+      const x = Math.cos(theta) * r;
+      const y = Math.sin(theta) * r;
+
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+
+    ctx.strokeStyle = "#00F3FF"; // Electric Blue
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#00F3FF";
+    ctx.shadowBlur = 20; // Heavy Glow
+    ctx.stroke();
+    ctx.restore();
+
+    // Layer 2: REMOVED INNER DASHED RING (User Request: "enleve le rond en traitié en dessous")
+
+    // Layer 3: Area Fill (Pulsing blue)
+    const pulse = 0.05 + Math.sin(time * 10) * 0.02; // Fast flicker
+    ctx.fillStyle = `rgba(0, 243, 255, ${pulse})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Volumetric Energy Glow (Ready Indicator)
+  if ((p.skillCD || 0) <= 0) {
+    ctx.save();
+
+    // Create Gradient centered on player (relative 0,0)
+    // Breathing Radius: 60px to 80px
+    const time = Date.now() / 1000;
+    const rMax = 70 + Math.sin(time * 3) * 10;
+
+    const grad = ctx.createRadialGradient(0, 0, 10, 0, 0, rMax);
+
+    // Core (Bright Gold)
+    grad.addColorStop(0, "rgba(255, 215, 0, 0.4)");
+    // Mid (Orange-Gold)
+    grad.addColorStop(0.5, "rgba(255, 160, 0, 0.15)");
+    // Edge (Fade out)
+    grad.addColorStop(1, "rgba(255, 215, 0, 0)");
+
+    ctx.fillStyle = grad;
+
+    // Draw the glow
+    ctx.beginPath();
+    ctx.arc(0, 0, rMax, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Optional: Subtle Energy Particles (Static visual for performance)
+    // Random sparkles near center?
+    // Let's keep it clean as requested "aura qui sort de moi"
+
+    ctx.restore();
+  }
 
   // --- DRAW PLAYER SHIP ---
   // Layer 1: Base Hull
@@ -1149,7 +1562,7 @@ const drawPlayer = (ctx, p) => {
   // Standard players just get subtle hit feedback or standard shadow.
   if (p.flashTime > 0 && p.invisible) {
     ctx.shadowBlur = 10; // Moderate Neon
-    ctx.shadowColor = "#ffffff"; 
+    ctx.shadowColor = "#ffffff";
   } else {
     ctx.shadowBlur = 5; // Moderate Neon (User Request: "Un peu de neon")
     ctx.shadowColor = primaryColor;
@@ -1163,34 +1576,63 @@ const drawPlayer = (ctx, p) => {
   if (p.isPoisoned && (!p.invisible || p.id === myId || p.flashTime > 0)) {
     ctx.save();
     const time = Date.now() / 200;
-    ctx.strokeStyle = "#00FF00"; // Bright Green
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.8;
 
-    // Bubbling Ring
+    // Pulsing Radius
+    const pulse = Math.sin(Date.now() / 150) * 3;
+    const auraRadius = 35 + pulse;
+
+    // 1. Toxic Haze (Gradient Fill)
+    const hazeGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, auraRadius);
+    hazeGrad.addColorStop(0, "rgba(0, 255, 0, 0)");
+    hazeGrad.addColorStop(0.6, "rgba(50, 205, 50, 0.2)");
+    hazeGrad.addColorStop(1, "rgba(0, 255, 0, 0)");
+
+    ctx.fillStyle = hazeGrad;
     ctx.beginPath();
-    // Radius pulses
-    const r = 35 + Math.sin(time) * 3;
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, auraRadius + 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Inner Toxic Ring (Rotating dashes)
+    ctx.beginPath();
+    ctx.arc(0, 0, 30, 0, Math.PI * 2); // Tight ring
+    ctx.strokeStyle = "#32cd32";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 10]);
+    ctx.lineDashOffset = -time * 5; // Rotate
     ctx.stroke();
 
-    // Inner Bubbles
-    ctx.fillStyle = "#32cd32";
-    for (let i = 0; i < 3; i++) {
-      const angle = (time + i * 2) % (Math.PI * 2);
-      const br = 25;
-      const bx = Math.cos(angle) * br;
-      const by = Math.sin(angle) * br;
+    // 3. Outer Glow Ring
+    ctx.beginPath();
+    ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "#00FF00"; // Bright Green
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]); // Solid
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#39ff14"; // Neon Green
+    ctx.stroke();
+
+    // 4. Bubbles (Simple particles in aura)
+    ctx.fillStyle = "rgba(173, 255, 47, 0.8)";
+    const bubbles = 3;
+    for (let i = 0; i < bubbles; i++) {
+      const angle = (time + i * ((Math.PI * 2) / bubbles)) % (Math.PI * 2);
+      const dist = 25 + Math.sin(time * 2 + i) * 5;
+      const bx = Math.cos(angle) * dist;
+      const by = Math.sin(angle) * dist;
       ctx.beginPath();
-      ctx.arc(bx, by, 4, 0, Math.PI * 2);
+      ctx.arc(bx, by, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
     ctx.restore();
   }
 
   // --- ACTIVE SKILL AURA (Energy Pulse) ---
   // Disable if Invisible
-  if ((p.isSkillActive || p.shield) && (!p.invisible || p.id === myId || p.flashTime > 0)) {
+  if (
+    (p.isSkillActive || p.shield) &&
+    (!p.invisible || p.id === myId || p.flashTime > 0)
+  ) {
     const time = Date.now() / 1000; // Seconds
 
     ctx.save();
@@ -1572,11 +2014,11 @@ const drawPlayerNames = (ctx) => {
 
     // BUSH HIDING LOGIC for Names
     const myBushId = getPlayerBushId(me);
-    const targetBushId = getPlayerBushId(p); 
+    const targetBushId = getPlayerBushId(p);
 
     // VISIBILITY CHECK:
     const dist = Math.hypot(p.x - me.x, p.y - me.y);
-    const visionRadius = 320; 
+    const visionRadius = 320;
 
     // Hidden if:
     // - Target is in a bush
@@ -1594,16 +2036,17 @@ const drawPlayerNames = (ctx) => {
     // Visuals (Flash)
     let isDamaged = false;
     if (p.id && playerVisuals.value[p.id]) {
-        const v = playerVisuals.value[p.id];
-        if (v.flashTime > 0) isDamaged = true;
+      const v = playerVisuals.value[p.id];
+      if (v.flashTime > 0) isDamaged = true;
     }
     // Note: Decoys usually don't have 'id' in the same list as players, so no flash logic for now unless added.
 
     // Logic: Hide if (Bush Logic) OR (Invisible Skill Logic)
     const isInvisibleSkill = p.invisible && !isMeOrMine && !isDamaged;
-    
+
     // Bush Hide: In Bush AND (Not Same Bush) AND (Not In Vision) AND (Not Damaged) AND (Not Me)
-    const isHiddenBush = inBush && !sameBush && !inVision && !isDamaged && !isMeOrMine;
+    const isHiddenBush =
+      inBush && !sameBush && !inVision && !isDamaged && !isMeOrMine;
 
     const isHidden = isHiddenBush || isInvisibleSkill;
 
@@ -1616,10 +2059,10 @@ const drawPlayerNames = (ctx) => {
     ctx.textAlign = "center";
     ctx.shadowColor = "#000";
     ctx.shadowBlur = 4;
-    
+
     // Render Name (or Hero name fallback)
     let name = p.username || p.hero;
-    if (typeof name === 'object') name = name.name; // Handle if hero object passed
+    if (typeof name === "object") name = name.name; // Handle if hero object passed
     ctx.fillText(name || "Unknown", screenX, screenY - 65);
 
     // CORES DISPLAY
@@ -1636,8 +2079,8 @@ const drawPlayerNames = (ctx) => {
     // HP Bar
     const maxHp = p.maxHp || 100;
     const hpPct = Math.max(0, p.hp / maxHp);
-    const barW = 100; 
-    const barH = 14; 
+    const barW = 100;
+    const barH = 14;
     const barX = screenX - barW / 2;
     const barY = screenY - 60;
 
@@ -1656,18 +2099,16 @@ const drawPlayerNames = (ctx) => {
       barY + 11
     );
 
-
     // MARKED STATUS
     if (p.isMarked) {
       ctx.fillStyle = "#ff00ff"; // Purple/Magenta
       ctx.font = "bold 16px 'Segoe UI'";
       ctx.fillText("☠ MARKED ☠", screenX, barY - 15);
-      
+
       // Purple Glow Border on Bar
       ctx.strokeStyle = "#ff00ff";
       ctx.lineWidth = 2;
       ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
-
     }
   };
 
@@ -1675,37 +2116,50 @@ const drawPlayerNames = (ctx) => {
   players.forEach(renderHUD);
 
   // 2. Render Decoys
-  entities.forEach(ent => {
-    if (ent.type === 'DECOY') {
-        renderHUD(ent);
+  entities.forEach((ent) => {
+    if (ent.type === "DECOY") {
+      renderHUD(ent);
     }
   });
 };
 
 const drawLeaderboard = (ctx) => {
   if (!players || players.length === 0) return;
+  // User Request: No Leaderboard in BR Mode
+  if (route.query.mode === "battle_royale") return;
 
   const sorted = [...players].sort((a, b) => (b.kills || 0) - (a.kills || 0));
   const top5 = sorted.slice(0, 5);
 
-  const boxW = 200;
-  const boxH = 50 + top5.length * 25;
+  const boxW = 240;
+  const boxH = 40 + top5.length * 25;
+  // Position: Top Right
   const startX = window.innerWidth - boxW - 20;
-  const startY = 80;
+  const startY = 80; // Below HUD
 
-  // Background
-  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-  ctx.fillRect(startX, startY, boxW, boxH);
-  ctx.strokeStyle = "#00f3ff";
-  ctx.strokeRect(startX, startY, boxW, boxH);
+  ctx.save();
+  // Glassmorphism Background
+  ctx.fillStyle = "rgba(10, 10, 15, 0.6)";
+  ctx.beginPath();
+  ctx.roundRect(startX, startY, boxW, boxH, 10);
+  ctx.fill();
 
-  // Title
+  // Neon Border
+  ctx.strokeStyle = "rgba(0, 243, 255, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Header Glow
+  ctx.shadowColor = "#00f3ff";
+  ctx.shadowBlur = 10;
   ctx.fillStyle = "#fff";
-  ctx.font = 'bold 16px "Segoe UI"';
-  ctx.textAlign = "left";
-  ctx.fillText("LEADERBOARD", startX + 10, startY + 20);
+  ctx.font = 'bold 14px "Segoe UI"';
+  ctx.textAlign = "center";
+  ctx.fillText("🏆 LEADERBOARD", startX + boxW / 2, startY + 25);
+  ctx.shadowBlur = 0; // Reset
 
   // Rows
+  ctx.textAlign = "left";
   ctx.font = '14px "Segoe UI"';
   top5.forEach((p, i) => {
     const y = startY + 45 + i * 25;
@@ -1723,6 +2177,89 @@ const drawLeaderboard = (ctx) => {
     ctx.textAlign = "right";
     ctx.fillText(kills, startX + boxW - 10, y);
     ctx.textAlign = "left";
+  });
+};
+
+// --- GHOST TELEPORT MARKER RENDERING ---
+const drawMarkers = (ctx) => {
+  const me = players.find((p) => p.id === myId);
+
+  players.forEach((p) => {
+    // Only draw marker for MY player ("seulement lui peut voir")
+    if (p.id === myId && p.teleportMarker) {
+      const mx = p.teleportMarker.x - cameraX;
+      const my = p.teleportMarker.y - cameraY;
+
+      ctx.save();
+      ctx.translate(mx, my);
+
+      const time = Date.now() / 200;
+
+      // 1. Ground Glow (Large base)
+      const glowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 60);
+      glowGrad.addColorStop(0, "rgba(0, 255, 255, 0.3)");
+      glowGrad.addColorStop(0.5, "rgba(0, 255, 255, 0.15)");
+      glowGrad.addColorStop(1, "rgba(0, 255, 255, 0)");
+      ctx.fillStyle = glowGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Pulsing Rings (Larger and brighter)
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#00FFFF";
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 20 + Math.sin(time) * 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 35 + Math.cos(time) * 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.6)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 50 + Math.sin(time * 0.5) * 5, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 3. Vertical Beam (Taller and brighter)
+      const beamGrad = ctx.createLinearGradient(0, 0, 0, -80);
+      beamGrad.addColorStop(0, "rgba(0, 255, 255, 0.7)");
+      beamGrad.addColorStop(1, "rgba(0, 255, 255, 0)");
+
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(8, 0);
+      ctx.lineTo(0, -80);
+      ctx.fill();
+
+      // 4. Floating Icon (Larger and brighter)
+      ctx.fillStyle = "#FFFFFF";
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#00FFFF";
+      ctx.beginPath();
+      ctx.arc(0, -50 + Math.sin(time * 2) * 8, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 5. Cross marker on ground
+      ctx.strokeStyle = "#00FFFF";
+      ctx.lineWidth = 3;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.lineTo(15, 0);
+      ctx.moveTo(0, -15);
+      ctx.lineTo(0, 15);
+      ctx.stroke();
+
+      ctx.restore();
+    }
   });
 };
 
@@ -1884,8 +2421,11 @@ const loop = (ctx) => {
   });
 
   // 8. PARTICLES & VFX (Over Everything usually)
+  drawMarkers(ctx); // GHOST TELEPORT MARKERS
   drawParticles(ctx);
   drawShockwaves(ctx);
+  drawSupernovas(ctx); // NEW SUPERNOVA LAYER
+  drawLightnings(ctx); // Add Lightning Layer
 
   // 9. PLAYER NAMES & HUD (ABSOLUTE TOP LAYER)
   drawPlayerNames(ctx);
@@ -1960,8 +2500,12 @@ if (canvasRef.value) {
       <div class="mm-player-list">
         <h3>SQUAD LIST</h3>
         <div class="player-list-scroll">
-          <div v-for="player in queuePlayers" :key="player" class="player-entry">
-             <span class="p-icon">👤</span> {{ player }}
+          <div
+            v-for="player in queuePlayers"
+            :key="player"
+            class="player-entry"
+          >
+            <span class="p-icon">👤</span> {{ player }}
           </div>
           <div v-if="queuePlayers.length === 0" class="empty-list">
             Scanning...
@@ -1971,9 +2515,10 @@ if (canvasRef.value) {
     </div>
 
     <!-- BR HUD -->
-    <div v-if="aliveCount > 0" class="br-hud-top-right">
+    <!-- BR HUD (Top Center) -->
+    <div v-if="aliveCount > 0" class="br-hud-top-center">
       <div class="alive-counter">
-        <span class="label">ALIVE</span>
+        <span class="label">TOP:</span>
         <span class="value">{{ aliveCount }}</span>
       </div>
     </div>
@@ -1983,15 +2528,6 @@ if (canvasRef.value) {
       <div v-for="msg in killMessages" :key="msg.id" class="kill-msg">
         {{ msg.text }}
       </div>
-    </div>
-
-    <!-- TOP RIGHT RANK (User Request) -->
-    <div
-      class="top-right-rank-hud"
-      v-if="!inQueue && !isDead && route.query.mode === 'battle_royale'"
-    >
-      <div class="rank-display-hud">TOP {{ aliveCount }}</div>
-      <div class="rank-label">SURVIVORS</div>
     </div>
 
     <!-- Respawn Overlay -->
@@ -2126,7 +2662,7 @@ if (canvasRef.value) {
         <h3>HERO: {{ gameStore.selectedHero?.name || "UNKNOWN" }}</h3>
       </div>
       <div class="hud-panel center">
-        <h2>NEON ARENA</h2>
+        <!-- Leaderboard moved here on Canvas -->
       </div>
 
       <!-- Skill HUD (Clickable on Mobile) -->
@@ -2892,9 +3428,9 @@ if (canvasRef.value) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 600px;
-  height: 600px;
-  border: 2px solid rgba(0, 243, 255, 0.2);
+  width: 1200px; /* Much larger */
+  height: 1200px;
+  border: 2px solid rgba(0, 243, 255, 0.5); /* More visible border */
   border-radius: 50%;
   pointer-events: none;
   z-index: 90;
@@ -2907,13 +3443,14 @@ if (canvasRef.value) {
   background: radial-gradient(
       circle,
       transparent 60%,
-      rgba(0, 243, 255, 0.1) 60%,
-      rgba(0, 243, 255, 0.1) 61%,
+      rgba(0, 243, 255, 0.2) 60%,
+      /* More visible ring */ rgba(0, 243, 255, 0.2) 61%,
       transparent 61%
     ),
-    linear-gradient(rgba(0, 243, 255, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 243, 255, 0.1) 1px, transparent 1px);
-  background-size: 100% 100%, 50px 50px, 50px 50px;
+    linear-gradient(rgba(0, 243, 255, 0.2) 1px, transparent 1px),
+    /* More visible grid */
+      linear-gradient(90deg, rgba(0, 243, 255, 0.2) 1px, transparent 1px);
+  background-size: 100% 100%, 80px 80px, 80px 80px; /* Larger cells */
 }
 
 .radar-sweep {
@@ -2926,8 +3463,8 @@ if (canvasRef.value) {
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
-    rgba(0, 243, 255, 0.4) 30deg,
-    transparent 30deg
+    rgba(0, 243, 255, 0.6) 30deg,
+    /* Brighter sweep */ transparent 30deg
   );
   animation: radarSpin 4s linear infinite;
 }
@@ -2941,56 +3478,108 @@ if (canvasRef.value) {
   }
 }
 
+/* === MODERN MATCHMAKING UI === */
+
 .mm-content {
   z-index: 101;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: rgba(0, 0, 0, 0.85); /* Darker backdrop for text */
-  padding: 40px;
-  border: 1px solid #00f3ff;
-  box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
-  border-radius: 10px;
+  /* Glassmorphism */
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(15px);
+  padding: 50px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  box-shadow: 0 0 50px rgba(0, 243, 255, 0.1),
+    inset 0 0 20px rgba(0, 243, 255, 0.05);
+  min-width: 500px;
+  position: relative;
+  overflow: hidden; /* For scanning effect */
+}
+
+/* Scanning Line Animation */
+.mm-content::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: linear-gradient(90deg, transparent, #00f3ff, transparent);
+  box-shadow: 0 0 20px #00f3ff;
+  animation: scanLine 3s ease-in-out infinite;
+  opacity: 0.5;
+}
+
+@keyframes scanLine {
+  0% {
+    top: -10%;
+  }
+  100% {
+    top: 110%;
+  }
+}
+
+.mm-content h1 {
+  font-size: 2.5rem;
+  margin-bottom: 30px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #fff, #00f3ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.5));
 }
 
 .mm-stats {
-  margin-top: 20px;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
 
 .stat-row {
   display: flex;
   justify-content: space-between;
-  width: 300px;
-  margin-bottom: 10px;
-  font-size: 1.2rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding-bottom: 5px;
+  width: 100%;
+  padding: 15px 20px;
+  background: rgba(0, 243, 255, 0.05);
+  border-radius: 8px;
+  border-left: 2px solid #00f3ff;
+  transition: all 0.3s ease;
+}
+
+.stat-row:hover {
+  background: rgba(0, 243, 255, 0.1);
+  transform: translateX(5px);
 }
 
 .stat-row .label {
-  color: #888;
+  color: #a0a0ff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .stat-row .value {
-  color: #00f3ff;
-  font-weight: bold;
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.1rem;
+  text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
 }
 
 .status-blink {
-  animation: blink 1s infinite;
+  animation: blink 1.5s infinite ease-in-out;
 }
 
-@keyframes blink {
-  50% {
-    opacity: 0.5;
-  }
-}
-
+/* Tips */
 .mm-tips {
-  margin-top: 30px;
-  font-size: 1rem;
-  color: #ccc;
+  margin-top: 40px;
+  padding: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.9rem;
+  color: #888;
   font-style: italic;
   max-width: 400px;
   text-align: center;
@@ -2998,35 +3587,65 @@ if (canvasRef.value) {
 
 .tip-label {
   color: #ffd700;
-  font-weight: bold;
-  margin-right: 5px;
+  font-weight: 800;
+  margin-right: 8px;
+  text-transform: uppercase;
 }
 
-/* PLAYER LIST RIGHT SIDE */
+/* Cancel Button */
+.btn-quit {
+  padding: 12px 40px;
+  background: transparent;
+  border: 1px solid #ff3333;
+  color: #ff3333;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 30px !important;
+}
+
+.btn-quit:hover {
+  background: #ff3333;
+  color: #000;
+  box-shadow: 0 0 20px #ff3333;
+}
+
+/* RIGHT SIDE PLAYER LIST - HOLOGRAPHIC STYLE */
 .mm-player-list {
   position: absolute;
-  right: 50px;
+  right: 60px;
   top: 50%;
   transform: translateY(-50%);
-  width: 250px;
-  height: 400px;
-  background: rgba(0, 0, 20, 0.9);
-  border: 1px solid #00f3ff;
-  border-radius: 10px;
-  padding: 20px;
+  width: 300px;
+  height: 500px;
+
+  background: rgba(5, 5, 10, 0.6);
+  backdrop-filter: blur(10px);
+  border-right: 2px solid rgba(0, 243, 255, 0.3); /* Only right border */
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+
+  border-radius: 20px 0 0 20px; /* Rounded Left */
+  padding: 25px;
   display: flex;
   flex-direction: column;
   z-index: 102;
-  box-shadow: 0 0 20px rgba(0, 243, 255, 0.1);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
 }
 
 .mm-player-list h3 {
-  color: #00f3ff;
-  border-bottom: 1px solid rgba(0, 243, 255, 0.3);
-  padding-bottom: 10px;
-  margin-bottom: 15px;
+  color: #fff;
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  letter-spacing: 3px;
   text-align: center;
-  letter-spacing: 2px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(0, 243, 255, 0.2);
+  margin-bottom: 20px;
 }
 
 .player-list-scroll {
@@ -3034,30 +3653,57 @@ if (canvasRef.value) {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding-right: 5px; /* Scrollbar space */
+}
+
+/* Scrollbar styling */
+.player-list-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.player-list-scroll::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 2px;
 }
 
 .player-entry {
   color: #fff;
-  font-size: 1.1rem;
-  padding: 5px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  font-size: 1rem;
+  padding: 10px 15px;
+  background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), transparent);
+  border-left: 2px solid #00f3ff;
+  border-radius: 0 4px 4px 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .p-icon {
-  font-size: 0.9rem;
-  opacity: 0.7;
+  font-size: 1rem;
+  color: #00f3ff;
+  filter: drop-shadow(0 0 5px #00f3ff);
 }
 
 .empty-list {
-  color: #666;
+  color: rgba(255, 255, 255, 0.3);
   font-style: italic;
   text-align: center;
-  margin-top: 50px;
+  margin-top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  letter-spacing: 1px;
 }
 
 .arena-respawn-box {
@@ -3080,5 +3726,64 @@ if (canvasRef.value) {
   text-align: center;
   width: 100%;
   display: block;
+}
+
+/* CENTER HUD (ALIVE ONLY) */
+/* CENTER HUD (ALIVE - FLOATING GLOW) */
+.br-hud-top-center {
+  position: absolute;
+  top: 25px; /* Slightly lower */
+  right: 25px;
+  left: auto;
+  transform: none;
+
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+
+  /* No hard box */
+  background: radial-gradient(
+    circle at center,
+    rgba(0, 243, 255, 0.15) 0%,
+    transparent 70%
+  );
+  border: none;
+  border-radius: 0;
+  padding: 10px 20px;
+  box-shadow: none;
+
+  z-index: 100;
+  pointer-events: none;
+}
+
+.br-hud-top-center .alive-counter {
+  display: flex;
+  flex-direction: row;
+  align-items: center; /* Center vertically */
+  gap: 10px;
+  margin: 0 !important;
+}
+
+.br-hud-top-center .label {
+  font-size: 1.5rem; /* Slightly smaller than value */
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #00f3ff;
+  text-transform: uppercase;
+  font-family: "Segoe UI", sans-serif;
+  text-shadow: 0 0 10px #00f3ff;
+  margin-bottom: 0;
+  line-height: 1;
+}
+
+.br-hud-top-center .value {
+  font-size: 2.2rem; /* Same size as label */
+  font-weight: 900;
+  color: #fff;
+  line-height: 1;
+  font-family: "Segoe UI", sans-serif;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
 }
 </style>

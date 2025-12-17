@@ -41,8 +41,10 @@ class Player {
 
     // BATTLE ROYALE STATS
     // REGEN LOGIC
+    // REGEN LOGIC
     this.lastDamageTime = Date.now();
     this.lastShootTime = 0;
+    this.powerCores = 0; // Initialize Cores
   }
 
   takeDamage(amount) {
@@ -272,14 +274,43 @@ class Player {
       this.speed = this.baseSpeed * 2.5;
       setTimeout(() => (this.speed = this.baseSpeed), 2500);
     } else if (name === "Ghost") {
-      this.cooldowns.skill += 3000;
-      duration = 3000;
-      // Phase
-      this.isPhasing = true;
-      setTimeout(() => {
-        this.isPhasing = false;
-        this.checkUnstuck();
-      }, 3000);
+      console.log(
+        "[SERVER] Ghost ability triggered! Current marker:",
+        this.teleportMarker
+      );
+
+      // GHOST TELEPORT MARKER SYSTEM (User Request)
+      // Stage 1: Place marker at current position
+      // Stage 2: Teleport to marker + shockwave
+
+      if (!this.teleportMarker) {
+        // STAGE 1: Place Marker
+        this.teleportMarker = { x: this.x, y: this.y };
+
+        // Cooldown 1.5s (User Request)
+        this.cooldowns.skill += 1500;
+
+        result = null; // No global event, just marker placement
+      } else {
+        // STAGE 2: Teleport
+        this.x = this.teleportMarker.x;
+        this.y = this.teleportMarker.y;
+
+        // Remove Marker
+        this.teleportMarker = null;
+
+        // Start Real Cooldown (5s)
+        this.cooldowns.skill += 5000;
+
+        // Visual Effect (Shockwave)
+        result = {
+          type: "shockwave",
+          x: this.x,
+          y: this.y,
+          color: "#00FFFF", // Cyan ghost color
+          ownerId: this.id,
+        };
+      }
     }
 
     // === DAMAGE ===
@@ -314,7 +345,7 @@ class Player {
         life: 3000,
         damage: 1000, // One Shot
         penetrateWalls: true, // Wall Hack
-        trailDuration: 1500 // Metadata for Client
+        trailDuration: 1500, // Metadata for Client
       };
     } else if (name === "Shadow") {
       this.cooldowns.skill += 5000;
@@ -325,8 +356,8 @@ class Player {
       // PROPOSAL: "Supernova"
       // Charge for 0.5s, then massive radial explosion around player.
 
-      this.cooldowns.skill += 999999; // Yellow State (Busy)
-      duration = 500; // Charge time visual
+      this.cooldowns.skill += 5000; // Total ~10s CD
+      duration = 800; // Charge time visual (Sync with Server)
 
       // Mark state for GameServer to handle explosion
       this.supernovaStartTime = Date.now();
@@ -376,26 +407,18 @@ class Player {
       }
       result = projs;
     } else if (name === "Storm") {
-      duration = 500;
-      // Overload: 16 Lightning Bolts (Buffed)
-      const projs = [];
-      for (let i = 0; i < 16; i++) {
-        const angle = (i / 16) * Math.PI * 2;
-        projs.push(
-          this.createProjectile(
-            this.x,
-            this.y,
-            angle,
-            800, // Speed
-            1000, // Life
-            25, // Damage (Buffed)
-            "#ffff00", // Color
-            8, // Radius
-            "PROJECTILE" // Type
-          )
-        );
-      }
-      result = projs;
+      duration = 5000;
+      this.cooldowns.skill += 5000; // Cooldown starts after usage
+      // TESLA STORM: Speed + Auto-Zap (Handled in Manager)
+      this.stormActive = true;
+      this.speed = this.baseSpeed * 1.6; // +60% Speed Boost (User Request)
+
+      setTimeout(() => {
+        this.stormActive = false;
+        this.speed = this.baseSpeed;
+      }, 5000);
+
+      result = null; // No immediate projectile, passive effect
     } else if (name === "Viper") {
       duration = 5000;
       // Venom: Poisonous shots
@@ -405,7 +428,7 @@ class Player {
       duration = 4000;
       // Cooldown starts AFTER invisibility ends (User Request)
       this.cooldowns.skill += 4000;
-      
+
       // Decoy: Spawn a fake player and go invisible
       this.isInvisible = true;
       this.speed = this.baseSpeed * 1.5;
@@ -433,14 +456,46 @@ class Player {
     } else if (name === "Jumper") {
       duration = 500;
       // Blink (Same as Spectre)
-      const maxDist = 350; // Further than Spectre
-      let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
-      let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
+      const maxDist = 350;
+      const targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
+      const targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
 
-      // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
-      // ... (Simplified check: Clamp to map)
-      this.x = Math.max(0, Math.min(4000, targetX));
-      this.y = Math.max(0, Math.min(4000, targetY));
+      // RAYCAST TELEPORT (Prevent Wall Clipping)
+      const steps = 20;
+      let safeX = this.x;
+      let safeY = this.y;
+      const obstacles = this.currentMapObstacles || [];
+
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const tx = this.x + (targetX - this.x) * t;
+        const ty = this.y + (targetY - this.y) * t;
+
+        // Check Point Collision (simpler for teleport)
+        let hit = false;
+        for (const obs of obstacles) {
+          if (
+            tx > obs.x &&
+            tx < obs.x + obs.w &&
+            ty > obs.y &&
+            ty < obs.y + obs.h
+          ) {
+            hit = true;
+            break;
+          }
+        }
+        if (hit) {
+          // Backtrack slightly to avoid being ON the wall edge
+          break;
+        }
+        safeX = tx;
+        safeY = ty;
+      }
+
+      // Clamp to Map
+      const limits = this.mapLimits || { width: 4000, height: 4000 };
+      this.x = Math.max(0, Math.min(limits.width, safeX));
+      this.y = Math.max(0, Math.min(limits.height, safeY));
     }
 
     // === SUPPORT ===
