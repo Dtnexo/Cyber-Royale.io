@@ -50,6 +50,13 @@ User.beforeCreate(async (user) => {
   }
 });
 
+User.beforeUpdate(async (user) => {
+  if (user.changed("password")) {
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(user.password, salt);
+  }
+});
+
 User.prototype.validPassword = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
