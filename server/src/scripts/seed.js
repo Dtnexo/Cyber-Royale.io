@@ -4,7 +4,7 @@ const bcrypt = require("bcrypt");
 async function seed() {
   try {
     // Safe Sync: Update existing tables without dropping data
-    await sequelize.sync(); 
+    await sequelize.sync();
 
     // Ensure Heroes table is updated with new prices
     const heroes = [
@@ -183,8 +183,8 @@ async function seed() {
         price: 1200,
         class: "Tank",
         skins: [
-            { name: "Default", value: "#708090" },
-            { name: "Fortress", value: "#2f4f4f" }
+          { name: "Default", value: "#708090" },
+          { name: "Fortress", value: "#2f4f4f" }
         ],
         stats: { hp: 350, speed: 50, cooldown: 10000 }
       },
@@ -194,8 +194,8 @@ async function seed() {
         price: 1150,
         class: "Tank",
         skins: [
-            { name: "Default", value: "#ff4500" },
-            { name: "Obsidian", value: "#3b3b3b" }
+          { name: "Default", value: "#ff4500" },
+          { name: "Obsidian", value: "#3b3b3b" }
         ],
         stats: { hp: 260, speed: 80, cooldown: 8000 }
       },
@@ -205,8 +205,8 @@ async function seed() {
         price: 1300,
         class: "Damage",
         skins: [
-            { name: "Default", value: "#4682b4" },
-            { name: "Thunder", value: "#ffff00" }
+          { name: "Default", value: "#4682b4" },
+          { name: "Thunder", value: "#ffff00" }
         ],
         stats: { hp: 110, speed: 115, cooldown: 6000 }
       },
@@ -216,8 +216,8 @@ async function seed() {
         price: 1250,
         class: "Damage",
         skins: [
-            { name: "Default", value: "#32cd32" },
-            { name: "Cobra", value: "#006400" }
+          { name: "Default", value: "#32cd32" },
+          { name: "Cobra", value: "#006400" }
         ],
         stats: { hp: 105, speed: 120, cooldown: 5000 }
       },
@@ -227,8 +227,8 @@ async function seed() {
         price: 1500,
         class: "Speed",
         skins: [
-            { name: "Default", value: "#9370db" },
-            { name: "Illusion", value: "#e6e6fa" }
+          { name: "Default", value: "#9370db" },
+          { name: "Illusion", value: "#e6e6fa" }
         ],
         stats: { hp: 80, speed: 165, cooldown: 5000 }
       },
@@ -238,10 +238,56 @@ async function seed() {
         price: 1400,
         class: "Speed",
         skins: [
-            { name: "Default", value: "#00fa9a" },
-            { name: "Quantum", value: "#48d1cc" }
+          { name: "Default", value: "#00fa9a" },
+          { name: "Quantum", value: "#48d1cc" }
         ],
         stats: { hp: 75, speed: 170, cooldown: 4000 }
+      },
+      // --- RECENTLY ADDED ---
+      {
+        id: 22,
+        name: "Guardian",
+        price: 1350,
+        class: "Support",
+        skins: [
+          { name: "Default", value: "#00ff7f" },
+          { name: "Angel", value: "#f0ffff" }
+        ],
+        stats: { hp: 150, speed: 100, cooldown: 12000 }
+      },
+      {
+        id: 23,
+        name: "Revenant",
+        price: 1450,
+        class: "Damage",
+        skins: [
+          { name: "Default", value: "#4b0082" },
+          { name: "Crimson", value: "#800000" }
+        ],
+        stats: { hp: 90, speed: 125, cooldown: 10000 }
+      },
+      {
+        id: 24,
+        name: "Crusher",
+        price: 1600,
+        class: "Tank",
+        skins: [
+          { name: "Default", value: "#8b4513" },
+          { name: "Rock", value: "#696969" }
+        ],
+        stats: { hp: 300, speed: 60, cooldown: 10000 }
+      },
+      // --- NEWEST HERO ---
+      {
+        id: 25,
+        name: "Aegis",
+        price: 1500,
+        class: "Speed",
+        skins: [
+          { name: "Default", value: "#ffd700" }, // Gold
+          { name: "Platinum", value: "#e5e4e2" }
+        ],
+        stats: { hp: 90, speed: 140, cooldown: 8000 }
       }
     ];
 
@@ -251,10 +297,6 @@ async function seed() {
     console.log("Heroes seeded successfully!");
 
     // --- SEED ADMIN USER ---
-    const adminUsername = "CommandantX";
-    const adminPassword = "NeonPrime2077!";
-    const adminEmail = "admin@cyber-royale.io";
-
     const existingAdmin = await User.findOne({
       where: { username: adminUsername },
     });

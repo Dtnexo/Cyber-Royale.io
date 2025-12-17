@@ -78,7 +78,7 @@ class GameServer {
                 this.players.delete(pid);
               }
             }
-             // 2. Check BR (Queue & Active)
+            // 2. Check BR (Queue & Active)
             this.brManager.forceRemovePlayer(username);
           }
           // =========================================
@@ -277,10 +277,20 @@ class GameServer {
               } else if (
                 item.type === "PROJECTILE" ||
                 item.type === "LAVA_WAVE" ||
+
                 item.type === "BLACK_HOLE_SHOT" ||
                 item.type === "SNIPER_SHOT"
+
+                item.type === "MARKER_SHOT" ||
+                item.type === "BLACK_HOLE_SHOT"
               ) {
                 this.projectiles.push(item);
+              } else if (item.type === "HEALING_STATION") {
+                this.entities.push(item);
+                setTimeout(() => {
+                  const idx = this.entities.indexOf(item);
+                  if (idx > -1) this.entities.splice(idx, 1);
+                }, item.life);
               } else if (item.type === "DECOY") {
                 this.entities.push(item);
                 setTimeout(() => {
@@ -288,7 +298,7 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE") {
+              } else if (item.type === "SHOCKWAVE" || item.type === "GRAVITY_SLAM") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
@@ -340,6 +350,27 @@ class GameServer {
                   radius: item.radius,
                   color: item.color,
                 });
+
+                // GRAVITY SLAM SLOW (Special Case)
+                if (item.type === "GRAVITY_SLAM") {
+                  this.players.forEach((p) => {
+                    if (p.id === item.ownerId) return;
+                    const dx = p.x - item.x;
+                    const dy = p.y - item.y;
+                    if (Math.sqrt(dx * dx + dy * dy) < item.radius) {
+                      if (!p.isSlowed) {
+                        p.isSlowed = true;
+                        const originalSpeed = p.speed; // This might be buggy if they were already buffed/nerfed. Uses baseSpeed is safer but might override buffs.
+                        // Let's use baseSpeed factor
+                        p.speed = p.baseSpeed * 0.2;
+                        setTimeout(() => {
+                          p.speed = p.baseSpeed;
+                          p.isSlowed = false;
+                        }, 2000);
+                      }
+                    }
+                  });
+                }
               }
             });
           }
@@ -381,6 +412,42 @@ class GameServer {
 
     // Start Loops
     this.startGameLoop();
+  }
+
+  handlePlayerDeath(player, killerId) {
+    const killer = this.players.get(killerId);
+    if (killer) {
+      killer.kills++;
+      killer.hp = Math.min(killer.maxHp, killer.hp + 50);
+      this.awardCoins(killer.username, 50);
+      // NOTIFY KILLER
+      this.io.to(killerId).emit("kill_confirmed", {
+        victim: player.username || player.hero.name,
+      });
+    }
+    // TRIGGER DEATH
+    const deathX = player.x;
+    const deathY = player.y;
+    player.hp = 0;
+    player.isDead = true;
+    const kName = killer ? killer.username || "Unknown" : "Unknown";
+    const hName = killer && killer.hero ? killer.hero.name || killer.hero : "?";
+    player.killedBy = kName;
+    player.killedByHero = typeof hName === "string" ? hName : "?";
+    player.isFrozen = false; // Clear Frost
+    player.freezeEndTime = 0;
+    player.respawnTime = Date.now() + 5000; // 5 Seconds
+    // Teleport to safe zone immediately (Invisible)
+    const spawn = this.getSafeSpawn();
+    player.x = spawn.x;
+    player.y = spawn.y;
+
+    // Explosion Event
+    this.io.to("game_room").emit("player_died", {
+      x: deathX,
+      y: deathY,
+      color: player.color, // Fixed access
+    });
   }
 
   startGameLoop() {
@@ -603,8 +670,10 @@ class GameServer {
           isRooted: player.isRooted,
           isSkillActive: player.isSkillActive,
           isSkillActive: player.isSkillActive,
+          isSkillActive: player.isSkillActive,
           freezeEndTime: player.freezeEndTime || 0,
           isPoisoned: player.isPoisoned, // SEND TO CLIENT
+          isMarked: player.isMarked,
           skillCD: player.cooldowns.skill,
           username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
@@ -638,6 +707,27 @@ class GameServer {
               break;
             }
           }
+        } else if (ent.type === "HEALING_STATION") {
+          // Heal nearby allies
+          for (const [pid, p] of this.players) {
+            if (p.isDead) continue;
+            // Allow self-heal and team heal logic (For now, heal everyone or just self? Let's say Friendly Fire is OFF, so heal Self + maybe concept of teams later?
+            // For FFA, heal ONLY owner? Or heal anyone nearby?
+            // Usually Support heals allies. In FFA, maybe it heals anyone?
+            // Let's make it heal OWNER and anyone else (Risky in FFA).
+            // Safe bet: Heal Owner, and maybe allies if we had teams.
+            // Re-reading request: "Support". implies helping others.
+            // Let's heal everyone nearby for chaos/fun or just owner.
+            // Code: Heal nearby players.
+            const dx = ent.x - p.x;
+            const dy = ent.y - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < ent.radius) {
+              if (p.hp < p.maxHp) {
+                p.hp = Math.min(p.maxHp, p.hp + ent.healRate * dt);
+              }
+            }
+          }
         }
       }
 
@@ -653,6 +743,57 @@ class GameServer {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
+
+        // BOOMERANG LOGIC (Aegis)
+        if (p.type === "BOOMERANG") {
+          const owner = this.players.get(p.ownerId);
+          if (owner) {
+            const dx = p.x - owner.x;
+            const dy = p.y - owner.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (!p.returning) {
+              if (dist > (p.maxDist || 400)) {
+                p.returning = true;
+                // Reset hit list to allow hitting enemies again on way back
+                p.hitTargets = [];
+              }
+            } else {
+              // Homing Return
+              const angle = Math.atan2(owner.y - p.y, owner.x - p.x);
+              const returnSpeed = 1200;
+              p.vx = Math.cos(angle) * returnSpeed;
+              p.vy = Math.sin(angle) * returnSpeed;
+
+              if (dist < 30) {
+                this.projectiles.splice(i, 1);
+                continue; // Caught
+              }
+            }
+          }
+
+          // BLOCK BULLETS (Destroy enemy projectiles)
+          for (const other of this.projectiles) {
+            if (other === p) continue;
+            if (other.ownerId === p.ownerId) continue; // Don't block ally shots
+            if (other.type === "BOOMERANG") continue; // Don't block other boomerangs?
+
+            const pdx = p.x - other.x;
+            const pdy = p.y - other.y;
+            const pDist = Math.sqrt(pdx * pdx + pdy * pdy);
+
+            if (pDist < p.radius + 15) { // Radius check
+              other.life = -1; // Destroy enemy bullet
+              // Visual Effect?
+              this.io.emit("visual_effect", {
+                type: "hit",
+                x: other.x,
+                y: other.y,
+                color: "#ffd700"
+              });
+            }
+          }
+        }
 
         // FRICTION LOGIC (Techno Mines)
         if (p.friction) {
@@ -863,55 +1004,98 @@ class GameServer {
               damage += (attacker.powerCores || 0) * 9;
             }
 
+            // MARKER DAMAGE AMPLIFICATION
+            if (player.isMarked) {
+              damage *= 1.5;
+            }
+
+            // APPLY MARK
+            if (p.effect === "MARK") {
+              player.isMarked = true;
+              // Refresh mark timer
+              if (player.markTimeout) clearTimeout(player.markTimeout);
+              player.markTimeout = setTimeout(() => {
+                player.isMarked = false;
+              }, 5000); // 5 Seconds Mark
+            }
+
             // HIT EFFECT
             this.io.emit("visual_effect", {
               type: "hit",
-              targetId: id, // Send Target ID
+              targetId: id,
               x: player.x,
               y: player.y,
               color: p.color || "#fff",
             });
 
-            // MAGMA DAMAGE SCALING (Long Range Bonus)
+            // MAGMA SCALING
             if (p.type === "LAVA_WAVE" && p.maxLife) {
-              // Life starts at 1500.
-              // Ratio 1.0 = Just Fired (Close). Ratio 0.0 = Expires (Far).
               const ratio = Math.max(0, p.life / p.maxLife);
-              // Inverse Ratio: 0.0 (Close) -> 1.0 (Far)
               const distFactor = 1.0 - ratio;
-              // Bonus: Up to +50% Damage at MAX range
               damage = damage * (1 + distFactor * 0.5);
+            }
+
+            // BOOMERANG LOGIC (Aegis)
+            if (p.type === "BOOMERANG") {
+              // Init Hit List
+              if (!p.hitTargets) p.hitTargets = [];
+
+              // Check if already hit this pass
+              if (p.hitTargets.includes(id)) {
+                // Already hit this player, ignore damage
+                continue;
+              }
+
+              // Register Hit
+              p.hitTargets.push(id);
+
+              // Apply SLOW (80% Slow for 2s? Or less?)
+              // User said "rallenti". Let's do 50% slow.
+              player.speed = player.baseSpeed * 0.5;
+              player.isSlowed = true; // Use existing flag if any
+              if (player.slowTimeout) clearTimeout(player.slowTimeout);
+              player.slowTimeout = setTimeout(() => {
+                player.speed = player.baseSpeed;
+                player.isSlowed = false;
+              }, 2000);
+
+              // Apply Damage
+              player.hp -= damage;
+
+              // Check Death
+              if (player.hp <= 0) this.handlePlayerDeath(player, p.ownerId);
+
+              // DO NOT SPLICE (Penetrate)
+              // DO NOT BREAK (Continue checking other players if overlapped)
+              continue;
             }
 
             // FREEZE EFFECT
             if (p.effect === "FREEZE") {
               player.isFrozen = true;
               player.speed = 0;
-              player.freezeEndTime = Date.now() + 2000; // Track end time for client animation
-
-              // Clear existing freeze timeout if any (not tracking ID for now, just overwrite)
+              player.freezeEndTime = Date.now() + 2000;
               setTimeout(() => {
                 player.isFrozen = false;
                 player.speed = player.baseSpeed;
                 player.freezeEndTime = 0;
-              }, 2000); // Freeze for 2 seconds
+              }, 2000);
             }
 
             // POISON EFFECT (VIPER)
             if (p.isPoison) {
               damage += 25;
               player.speed = player.baseSpeed * 0.4;
-              player.isPoisoned = true; // Flag for Client Visuals
+              player.isPoisoned = true;
 
               if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
 
               player.poisonTimeout = setTimeout(() => {
                 player.speed = player.baseSpeed;
-                player.isPoisoned = false; // Turn off visual
+                player.isPoisoned = false;
                 player.poisonTimeout = null;
               }, 3000);
 
-              // Initial Hit Effect
               this.io.emit("visual_effect", {
                 type: "poison_hit",
                 targetId: player.id,
@@ -925,40 +1109,7 @@ class GameServer {
 
             // Handle Death
             if (player.hp <= 0) {
-              const killer = this.players.get(p.ownerId);
-              if (killer) {
-                killer.kills++;
-                killer.hp = Math.min(killer.maxHp, killer.hp + 50);
-                this.awardCoins(killer.username, 50);
-                // NOTIFY KILLER
-                this.io.to(p.ownerId).emit("kill_confirmed", {
-                  victim: player.username || player.hero.name,
-                });
-              }
-              // TRIGGER DEATH
-              const deathX = player.x;
-              const deathY = player.y;
-              player.hp = 0;
-              player.isDead = true;
-              const kName = killer ? killer.username || "Unknown" : "Unknown";
-              const hName =
-                killer && killer.hero ? killer.hero.name || killer.hero : "?";
-              player.killedBy = kName;
-              player.killedByHero = typeof hName === "string" ? hName : "?";
-              player.isFrozen = false; // Clear Frost
-              player.freezeEndTime = 0;
-              player.respawnTime = Date.now() + 5000; // 5 Seconds
-              // Teleport to safe zone immediately (Invisible)
-              const spawn = this.getSafeSpawn();
-              player.x = spawn.x;
-              player.y = spawn.y;
-
-              // Explosion Event
-              this.io.to("game_room").emit("player_died", {
-                x: deathX,
-                y: deathY,
-                color: player.color,
-              });
+              this.handlePlayerDeath(player, p.ownerId);
             }
             break; // Projectile destroyed
           }

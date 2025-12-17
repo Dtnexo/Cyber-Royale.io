@@ -495,6 +495,70 @@ class Player {
       this.hp = Math.min(this.maxHp, this.hp + 100);
     }
 
+    // === NEW REQUESTED CHARACTERS ===
+    else if (name === "Guardian") {
+      this.cooldowns.skill += 12000;
+      duration = 8000;
+      // Healing Station: Fixed position entity
+      result = {
+        type: "HEALING_STATION",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 200,
+        healRate: 20, // per tick/second
+        life: 8000,
+        color: "#00ff7f"
+      };
+    } else if (name === "Revenant") {
+      // Mark of the Abyss
+      const speed = 1500;
+      result = {
+        type: "MARKER_SHOT",
+        id: Math.random().toString(36).substr(2, 9),
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(this.mouseAngle) * speed,
+        vy: Math.sin(this.mouseAngle) * speed,
+        ownerId: this.id,
+        color: "#4b0082",
+        life: 1500,
+        damage: 50, // Buffed
+        radius: 15, // Larger hitbox
+        effect: "MARK"
+      };
+    } else if (name === "Crusher") {
+      this.cooldowns.skill += 10000;
+      duration = 500; // Instant effect visual
+      // Gravity Slam
+      result = {
+        type: "GRAVITY_SLAM",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 300,
+        knockback: -150
+      };
+    } else if (name === "Aegis") {
+      // Boomerang Shield
+      const speed = 1000;
+      result = {
+        type: "BOOMERANG",
+        id: Math.random().toString(36).substr(2, 9),
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(this.mouseAngle) * speed,
+        vy: Math.sin(this.mouseAngle) * speed,
+        color: "#ffd700", // Gold
+        life: 3000,
+        damage: 40,
+        radius: 20,
+        returning: false,
+        maxDist: 400
+      };
+    }
+
     // === COMMON AURA LOGIC ===
     if (duration > 0 && name !== "Shadow") {
       setTimeout(() => {

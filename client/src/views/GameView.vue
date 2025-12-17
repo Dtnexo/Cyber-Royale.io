@@ -1655,15 +1655,19 @@ const drawPlayerNames = (ctx) => {
       screenX,
       barY + 11
     );
-  };
 
-  // 1. Render Players
-  players.forEach(renderHUD);
 
-  // 2. Render Decoys
-  entities.forEach(ent => {
-    if (ent.type === 'DECOY') {
-        renderHUD(ent);
+    // MARKED STATUS
+    if (p.isMarked) {
+      ctx.fillStyle = "#ff00ff"; // Purple/Magenta
+      ctx.font = "bold 16px 'Segoe UI'";
+      ctx.fillText("☠ MARKED ☠", screenX, barY - 15);
+      
+      // Purple Glow Border on Bar
+      ctx.strokeStyle = "#ff00ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
+
     }
   });
 };
@@ -1675,11 +1679,11 @@ const drawLeaderboard = (ctx) => {
   const top5 = sorted.slice(0, 5);
 
   const boxW = 200;
-  const boxH = 30 + top5.length * 25;
-  const startX = window.innerWidth - boxW - 20; // Moved to RIGHT
-  const startY = 160; // Below Rank/HUD & Abort Button
+  const boxH = 50 + top5.length * 25;
+  const startX = window.innerWidth - boxW - 20;
+  const startY = 20;
 
-  // Bg
+  // Background
   ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
   ctx.fillRect(startX, startY, boxW, boxH);
   ctx.strokeStyle = "#00f3ff";
