@@ -78,7 +78,7 @@ class GameServer {
                 this.players.delete(pid);
               }
             }
-             // 2. Check BR (Queue & Active)
+            // 2. Check BR (Queue & Active)
             this.brManager.forceRemovePlayer(username);
           }
           // =========================================
@@ -277,9 +277,16 @@ class GameServer {
               } else if (
                 item.type === "PROJECTILE" ||
                 item.type === "LAVA_WAVE" ||
+                item.type === "MARKER_SHOT" ||
                 item.type === "BLACK_HOLE_SHOT"
               ) {
                 this.projectiles.push(item);
+              } else if (item.type === "HEALING_STATION") {
+                this.entities.push(item);
+                setTimeout(() => {
+                  const idx = this.entities.indexOf(item);
+                  if (idx > -1) this.entities.splice(idx, 1);
+                }, item.life);
               } else if (item.type === "DECOY") {
                 this.entities.push(item);
                 setTimeout(() => {
@@ -287,7 +294,7 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE") {
+              } else if (item.type === "SHOCKWAVE" || item.type === "GRAVITY_SLAM") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
@@ -339,6 +346,27 @@ class GameServer {
                   radius: item.radius,
                   color: item.color,
                 });
+
+                // GRAVITY SLAM SLOW (Special Case)
+                if (item.type === "GRAVITY_SLAM") {
+                  this.players.forEach((p) => {
+                    if (p.id === item.ownerId) return;
+                    const dx = p.x - item.x;
+                    const dy = p.y - item.y;
+                    if (Math.sqrt(dx * dx + dy * dy) < item.radius) {
+                      if (!p.isSlowed) {
+                        p.isSlowed = true;
+                        const originalSpeed = p.speed; // This might be buggy if they were already buffed/nerfed. Uses baseSpeed is safer but might override buffs.
+                        // Let's use baseSpeed factor
+                        p.speed = p.baseSpeed * 0.2;
+                        setTimeout(() => {
+                          p.speed = p.baseSpeed;
+                          p.isSlowed = false;
+                        }, 2000);
+                      }
+                    }
+                  });
+                }
               }
             });
           }
@@ -589,8 +617,10 @@ class GameServer {
           isRooted: player.isRooted,
           isSkillActive: player.isSkillActive,
           isSkillActive: player.isSkillActive,
+          isSkillActive: player.isSkillActive,
           freezeEndTime: player.freezeEndTime || 0,
           isPoisoned: player.isPoisoned, // SEND TO CLIENT
+          isMarked: player.isMarked,
           skillCD: player.cooldowns.skill,
           username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
@@ -622,6 +652,27 @@ class GameServer {
                 this.io.emit("player_died", { id: pid, killerId: ent.ownerId });
               }
               break;
+            }
+          }
+        } else if (ent.type === "HEALING_STATION") {
+          // Heal nearby allies
+          for (const [pid, p] of this.players) {
+            if (p.isDead) continue;
+            // Allow self-heal and team heal logic (For now, heal everyone or just self? Let's say Friendly Fire is OFF, so heal Self + maybe concept of teams later?
+            // For FFA, heal ONLY owner? Or heal anyone nearby?
+            // Usually Support heals allies. In FFA, maybe it heals anyone?
+            // Let's make it heal OWNER and anyone else (Risky in FFA).
+            // Safe bet: Heal Owner, and maybe allies if we had teams.
+            // Re-reading request: "Support". implies helping others.
+            // Let's heal everyone nearby for chaos/fun or just owner.
+            // Code: Heal nearby players.
+            const dx = ent.x - p.x;
+            const dy = ent.y - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < ent.radius) {
+              if (p.hp < p.maxHp) {
+                p.hp = Math.min(p.maxHp, p.hp + ent.healRate * dt);
+              }
             }
           }
         }
@@ -819,6 +870,21 @@ class GameServer {
             if (attacker) {
               // +9 Damage per Core (User Request)
               damage += (attacker.powerCores || 0) * 9;
+            }
+
+            // MARKER DAMAGE AMPLIFICATION
+            if (player.isMarked) {
+              damage *= 1.5;
+            }
+
+            // APPLY MARK
+            if (p.effect === "MARK") {
+              player.isMarked = true;
+              // Refresh mark timer
+              if (player.markTimeout) clearTimeout(player.markTimeout);
+              player.markTimeout = setTimeout(() => {
+                player.isMarked = false;
+              }, 5000); // 5 Seconds Mark
             }
 
             // HIT EFFECT
