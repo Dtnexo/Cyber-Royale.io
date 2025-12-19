@@ -59,12 +59,11 @@ class GameServer {
             username = "Unknown"; // No Token = Guest
           }
 
-          // Cleanup existing session for this socket (Allow Mode Switching)
+          // SECURITY: Prevent Hero Switching while active
+          // SECURITY: Prevent Hero Switching while active
           if (this.players.has(socket.id)) {
-            this.players.delete(socket.id);
+            return;
           }
-          // Cleanup BR (Queue or Match)
-          this.brManager.handleDisconnect(socket);
 
           // === GLOBAL SINGLE SESSION ENFORCEMENT ===
           if (username && username !== "Unknown") {
@@ -217,8 +216,7 @@ class GameServer {
                   socket.id,
                   hero.toJSON(),
                   username,
-                  skinColor,
-                  "arena"
+                  skinColor
                 );
 
                 // Set Arena Map Context

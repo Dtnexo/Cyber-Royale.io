@@ -5,7 +5,6 @@ import { io } from "socket.io-client";
 import nipplejs from "nipplejs";
 import { useGameStore } from "../stores/game";
 import { useAuthStore } from "../stores/auth";
-import { useSocketStore } from "../stores/socket";
 
 const router = useRouter();
 const route = useRoute();
@@ -168,15 +167,11 @@ onMounted(async () => {
   }
 
   // Auto-detect URL for production (same origin), localhost for dev
-  const socketStore = useSocketStore();
-  socket.value = socketStore.socket;
+  const socketUrl = import.meta.env.PROD
+    ? window.location.origin
+    : "http://localhost:3005";
 
-  // Ensure socket is ready (it should be from App.vue)
-  if (!socket.value) {
-    console.error("Socket not initialized! Redirecting...");
-    router.push("/dashboard");
-    return;
-  }
+  socket.value = io(socketUrl);
 
   // Join Game Logic
   const joinMatch = () => {
@@ -206,7 +201,6 @@ onMounted(async () => {
   };
 
   socket.value.on("connect", () => {
-    console.log("Socket connected (Event)");
     joinMatch();
   });
 
@@ -216,6 +210,66 @@ onMounted(async () => {
     customStatus.value = msg + " (Retrying...)";
     // Retry in 5s
     setTimeout(joinMatch, 5000);
+  });
+
+  // === INPUT SYSTEM ===
+  // Track mouse position and calculate angle
+  const handleMouseMove = (e) => {
+    if (!canvasRef.value) return;
+    const rect = canvasRef.value.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Find my player
+    const me = players.find((p) => p.id === myId);
+    if (me) {
+      const worldX = mouseX + cameraX;
+      const worldY = mouseY + cameraY;
+      mouseAngle = Math.atan2(worldY - me.y, worldX - me.x);
+    }
+  };
+
+  // Keyboard handlers
+  const handleKeyDown = (e) => {
+    if (e.key === "w" || e.key === "W") keys.w = true;
+    if (e.key === "a" || e.key === "A") keys.a = true;
+    if (e.key === "s" || e.key === "S") keys.s = true;
+    if (e.key === "d" || e.key === "D") keys.d = true;
+    if (e.key === " ") keys.space = true;
+    if (e.key === "e" || e.key === "E") {
+      if (socket.value) socket.value.emit("skill_trigger");
+    }
+  };
+
+  const handleKeyUp = (e) => {
+    if (e.key === "w" || e.key === "W") keys.w = false;
+    if (e.key === "a" || e.key === "A") keys.a = false;
+    if (e.key === "s" || e.key === "S") keys.s = false;
+    if (e.key === "d" || e.key === "D") keys.d = false;
+    if (e.key === " ") keys.space = false;
+  };
+
+  // Add event listeners
+  window.addEventListener("mousemove", handleMouseMove);
+  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("keyup", handleKeyUp);
+
+  // Input synchronization loop (20Hz)
+  const inputSyncInterval = setInterval(() => {
+    if (socket.value && myId) {
+      socket.value.emit("client_input", {
+        keys: { ...keys },
+        mouseAngle: mouseAngle,
+      });
+    }
+  }, 50); // 20 times per second
+
+  // Cleanup on unmount
+  onUnmounted(() => {
+    window.removeEventListener("mousemove", handleMouseMove);
+    window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("keyup", handleKeyUp);
+    clearInterval(inputSyncInterval);
   });
 
   socket.value.on("game_init", (data) => {
@@ -520,6 +574,7 @@ onMounted(async () => {
   window.addEventListener("keydown", handleKey);
   window.addEventListener("keyup", handleKey);
   window.addEventListener("mousemove", handleMouse);
+  window.addEventListener("keypress", handleSkill);
   window.addEventListener("resize", handleResize);
 
   const ctx = canvasRef.value.getContext("2d");
@@ -550,14 +605,6 @@ onMounted(async () => {
       socket.value.emit("client_input", { keys, mouseAngle });
     }
   }, 30);
-
-  window.addEventListener("resize", handleResize);
-
-  // JOIN GAME SAFE CHECK (After listeners are ready)
-  if (socket.value.connected) {
-    console.log("Socket already connected, joining now...");
-    joinMatch();
-  }
 });
 
 const handleResize = () => {
@@ -569,68 +616,47 @@ const handleResize = () => {
   }
 };
 
+// Add listener in the MAIN onMounted logic if possible, or just add a separate one.
+// The file has one big onMounted at line ~356.
+// I inserted a NEW onMounted block above. This is valid in Vue 3 (multiple hooks run in order),
+// BUT it's messy.
+// Let's just keep the listener addition here.
+
+onMounted(() => {
+  window.addEventListener("resize", handleResize);
+});
+
 onUnmounted(() => {
   if (socket.value) {
     socket.value.emit("leave_queue");
-    // DO NOT DISCONNECT (Global Socket)
-    // socket.value.disconnect();
-
-    // Remove listeners to avoid duplicates when re-entering
-    socket.value.off("connect");
-    socket.value.off("error_message");
-    socket.value.off("game_init");
-    socket.value.off("queue_update");
-    socket.value.off("queue_notification");
-    socket.value.off("queue_status");
-    socket.value.off("queue_timer");
-    socket.value.off("br_countdown");
-    socket.value.off("br_start");
-    socket.value.off("br_update");
-    socket.value.off("server_update");
-    socket.value.off("br_rewards");
-    socket.value.off("br_eliminated");
-    socket.value.off("br_game_over");
-    socket.value.off("player_died");
-    socket.value.off("visual_effect");
-    socket.value.off("kill_confirmed");
-    // We keep the socket itself alive
+    socket.value.disconnect();
   }
+  window.removeEventListener("keydown", handleKey);
+  window.removeEventListener("keyup", handleKey);
   window.removeEventListener("mousemove", handleMouse);
+  window.removeEventListener("keypress", handleSkill);
   window.removeEventListener("resize", handleResize);
   cancelAnimationFrame(animationId);
 });
 
 const handleKey = (e) => {
-  const key = e.key.toLowerCase();
-  if (["w", "a", "s", "d"].includes(key)) {
-    keys[key] = e.type === "keydown";
+  if (["w", "a", "s", "d"].includes(e.key.toLowerCase())) {
+    keys[e.key.toLowerCase()] = e.type === "keydown";
   }
   if (e.code === "Space") {
     keys.space = e.type === "keydown";
   }
-  if (e.key === "Shift") {
-    keys.shift = e.type === "keydown";
-  }
-
-  // TRIGGER SKILL ON E KEYDOWN
-  if (key === "e" && e.type === "keydown") {
-    socket.value.emit("skill_trigger");
-  }
 };
 
 const handleMouse = (e) => {
-  // FIND ME to calculate accurate screen position (Prevents aiming offset during camera smoothing)
-  const me = players.find((p) => p.id === myId);
-  if (me) {
-    const screenX = me.x - cameraX;
-    const screenY = me.y - cameraY;
-    mouseAngle = Math.atan2(e.clientY - screenY, e.clientX - screenX);
-  } else {
-    // Fallback if local player state is not yet received
-    const centerX = window.innerWidth / 2;
-    const centerY = window.innerHeight / 2;
-    mouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
-  }
+  // Calculate angle relative to center of screen (since camera follows player)
+  const centerX = window.innerWidth / 2;
+  const centerY = window.innerHeight / 2;
+  mouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
+};
+
+const handleSkill = (e) => {
+  if (e.key.toLowerCase() === "e") socket.value.emit("skill_trigger");
 };
 
 // --- MOBILE CONTROLS ---
@@ -725,42 +751,26 @@ const stopShooting = () => {
 const drawGrid = (ctx) => {
   if (!mapData) return;
 
-  // Background Fill (Deep Space Blue)
-  ctx.fillStyle = "#050510";
-  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
-
-  // Draw Infinite Grid (Neon Blue)
-  ctx.strokeStyle = "rgba(0, 243, 255, 0.15)"; // Brighter Neon
-  ctx.lineWidth = 1;
+  // Draw Infinite Grid
+  ctx.strokeStyle = "#222233";
+  ctx.lineWidth = 2;
   const gridSize = 100;
 
   const startX = Math.floor(cameraX / gridSize) * gridSize;
   const startY = Math.floor(cameraY / gridSize) * gridSize;
 
-  // Vertical Lines
   for (
     let x = startX;
     x < startX + window.innerWidth + gridSize;
     x += gridSize
   ) {
     ctx.beginPath();
-    const dx = Math.floor(x - cameraX) + 0.5;
+    // Pixel-Perfect rounding
+    const dx = Math.floor(x - cameraX) + 0.5; // +0.5 for crisp canvas lines
     ctx.moveTo(dx, 0);
     ctx.lineTo(dx, window.innerHeight);
     ctx.stroke();
-
-    // Grid Dots at intersections
-    for (
-      let y = startY;
-      y < startY + window.innerHeight + gridSize;
-      y += gridSize
-    ) {
-      const dy = Math.floor(y - cameraY) + 0.5;
-      ctx.fillStyle = "rgba(0, 243, 255, 0.2)";
-      ctx.fillRect(dx - 1, dy - 1, 2, 2);
-    }
   }
-  // Horizontal Lines
   for (
     let y = startY;
     y < startY + window.innerHeight + gridSize;
@@ -773,15 +783,16 @@ const drawGrid = (ctx) => {
     ctx.stroke();
   }
 
-  // Map Boundary (Strict Neon)
+  // Map Boundary
   if (mapData.width < 2000) {
-    // ARENA MODE - SHARP NEON
-    const pulse = Math.abs(Math.sin(Date.now() / 800)) * 10 + 5;
-    ctx.strokeStyle = "#00f3ff";
-    ctx.lineWidth = 3;
+    // ARENA MODE - CLASSIC BLUE NEON
+    // ARENA MODE - CLASSIC BLUE NEON
+    const pulse = Math.abs(Math.sin(Date.now() / 1000)) * 20 + 10;
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.3)"; // Less Luminous (Transparent)
+    ctx.lineWidth = 2; // Moderate Line
     ctx.shadowColor = "#00f3ff";
-    ctx.shadowBlur = pulse;
-
+    ctx.shadowBlur = 5; // Restored Subtle Glow (User Request)
+    // ROUND COORDS for Boundary
     ctx.strokeRect(
       Math.floor(0 - cameraX),
       Math.floor(0 - cameraY),
@@ -789,7 +800,7 @@ const drawGrid = (ctx) => {
       mapData.height
     );
   } else {
-    // BR MODE - INDUSTRIAL
+    // BR MODE - DARK INDUSTRIAL
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 5;
     ctx.shadowBlur = 0;
@@ -949,8 +960,8 @@ const drawWalls = (ctx) => {
     // Ensure Opaque Draw
     ctx.globalAlpha = 1.0;
 
-    // Wall Body (Dark Steel)
-    ctx.fillStyle = "#101018";
+    // Wall Body (Solid Black to hide everything under it, e.g. bushes)
+    ctx.fillStyle = "#000000";
     // Overfill to prevent sub-pixel gaps (Gray Line Glitch)
     ctx.fillRect(
       screenX - 1,
@@ -959,18 +970,15 @@ const drawWalls = (ctx) => {
       Math.ceil(obs.h) + 2
     );
 
-    // Neon Glow Border
+    // Neon Glow Border (Simplified for Performance)
     if (obs.type === "WALL") {
       ctx.strokeStyle = "#00f3ff";
     } else if (obs.type === "CORE") {
       ctx.strokeStyle = "#ff00ff";
-      ctx.fillStyle = "rgba(255, 0, 255, 0.1)"; // Slight purple tint for Core
-      ctx.fillRect(screenX, screenY, obs.w, obs.h);
     } else {
       ctx.strokeStyle = "#ffee00";
     }
-
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2;
     ctx.strokeRect(screenX, screenY, Math.ceil(obs.w), Math.ceil(obs.h));
   });
 };
@@ -2537,16 +2545,6 @@ const drawVoltTrails = (ctx) => {
 };
 
 const loop = (ctx) => {
-  if (!canvasRef.value) return;
-
-  // AUTO-RESIZE SYNC (Ensures canvas matches window even after zoom/UI changes)
-  if (
-    canvasRef.value.width !== window.innerWidth ||
-    canvasRef.value.height !== window.innerHeight
-  ) {
-    handleResize();
-  }
-
   // Update Camera
   let target = players.find((p) => p.id === myId);
   if (!target && spectatingId.value) {
@@ -2557,6 +2555,8 @@ const loop = (ctx) => {
     const targetX = target.x - window.innerWidth / 2;
     const targetY = target.y - window.innerHeight / 2;
 
+    // FIX: Snap if distance is too large (Teleport/Knockback) to prevent culling visual glitch
+    // Goliath Knockback (400) was causing player to fly off-screen while camera lagged
     const dist = Math.hypot(targetX - cameraX, targetY - cameraY);
     if (dist > 300) {
       cameraX = targetX;
@@ -2575,38 +2575,16 @@ const loop = (ctx) => {
     shakeDuration--;
     shakeX = (Math.random() - 0.5) * shakeIntensity;
     shakeY = (Math.random() - 0.5) * shakeIntensity;
-    shakeIntensity *= 0.9;
+    shakeIntensity *= 0.9; // Decay
   } else {
     shakeX = 0;
     shakeY = 0;
   }
 
-  // Background
   ctx.fillStyle = "#050510";
   ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height);
 
-  // DEBUG: IF MAP MISSING
-  if (!mapData) {
-    ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
-    ctx.font = "bold 24px Orbitron";
-    ctx.textAlign = "center";
-    const status = socket.value?.connected
-      ? "WAITING FOR SERVER DATA..."
-      : "SOCKET DISCONNECTED";
-    ctx.fillText(
-      "MAP ERROR: " + status,
-      window.innerWidth / 2,
-      window.innerHeight / 2
-    );
-    ctx.font = "14px Orbitron";
-    ctx.fillText(
-      "Check your connection or wait 5s.",
-      window.innerWidth / 2,
-      window.innerHeight / 2 + 40
-    );
-  }
-
-  // FLASH OVERLAY
+  // FLASH OVERLAY (Decay)
   if (flashAlpha > 0) {
     flashAlpha -= 0.02;
     if (flashAlpha < 0) flashAlpha = 0;

@@ -1,11 +1,10 @@
 class Player {
-  constructor(id, heroData, username, customColor, gameMode = "arena") {
+  constructor(id, heroData, username, customColor) {
     this.id = id;
     this.hero = heroData; // { id, name, stats: { hp, speed, cooldown } }
     this.heroName = heroData.name;
     this.heroClass = heroData.class;
     this.username = username || "Unknown"; // Store username
-    this.gameMode = gameMode;
     this.x = 400; // Center
     this.y = 300;
     this.hp = heroData.stats.hp;
@@ -25,14 +24,7 @@ class Player {
       this.color = `hsl(${randomHue}, 100%, 50%)`;
     }
 
-    this.keys = {
-      w: false,
-      a: false,
-      s: false,
-      d: false,
-      space: false,
-      shift: false,
-    };
+    this.keys = { w: false, a: false, s: false, d: false, space: false };
     this.mouseAngle = 0;
     this.cooldowns = { skill: 0, shoot: 0 };
 
@@ -111,12 +103,7 @@ class Player {
     if (this.isRooted) return; // Skip movement
 
     // Basic movement logic
-    let moveStep = this.speed * dt;
-
-    // SPRINT (BR Only - User Request)
-    if (this.gameMode === "battle_royale" && this.keys.shift) {
-      moveStep *= 1.4;
-    }
+    const moveStep = this.speed * dt;
 
     // --- X AXIS MOVEMENT ---
     let dx = 0;
