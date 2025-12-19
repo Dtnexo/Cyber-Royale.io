@@ -1221,6 +1221,28 @@ const drawParticles = (ctx) => {
         Math.PI * 2
       );
       ctx.fill();
+    } else if (p.type === "laser_beam") {
+      // CONTINUOUS LASER BEAM SEGMENT
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(p.angle);
+      
+      // Draw Line Segment (Rect)
+      ctx.fillStyle = `rgba(0, 243, 255, ${p.life / p.maxLife})`; // Fade out
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#00f3ff";
+      
+      // Draw rectangle centered on Y, extending backwards slightly to cover gaps
+      ctx.fillRect(-p.width/2, -p.height/2, p.width, p.height);
+      
+      // Core (White)
+      ctx.fillStyle = `rgba(255, 255, 255, ${p.life / p.maxLife})`;
+      ctx.fillRect(-p.width/2, -p.height/4, p.width, p.height/2);
+      
+      ctx.restore();
     } else if (p.type === "trail") {
       // Sniper Trail Glow (User Request)
       const sx = p.x - cameraX;
@@ -1310,37 +1332,44 @@ const drawProjectiles = (ctx) => {
     if (p.type === "LAVA_WAVE") {
       const sx = Math.floor(p.x - cameraX);
       const sy = Math.floor(p.y - cameraY);
-      const radius = 25; // Slightly larger
+      
+      // Pulsating Magma Effect
+      const pulse = Math.sin(Date.now() / 100) * 5; 
+      const radius = 25 + pulse; // Pulsing Size
 
       ctx.save();
       ctx.translate(sx, sy);
       const angle = Math.atan2(p.vy, p.vx);
       ctx.rotate(angle);
 
-      // Layer 1: Core (Yellow/White)
+      // Layer 1: Core (Yellow/White) - Hot Center
       ctx.fillStyle = "#fff700";
       ctx.beginPath();
-      ctx.arc(0, 0, radius * 0.6, -Math.PI / 2, Math.PI / 2);
+      // Elongated tear shape
+      ctx.ellipse(0, 0, radius * 0.8, radius * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Layer 2: Magma (Orange)
-      ctx.fillStyle = "rgba(255, 69, 0, 0.7)";
+      // Layer 2: Magma Crust (Orange/Red)
+      ctx.fillStyle = "rgba(255, 69, 0, 0.6)";
       ctx.beginPath();
-      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.ellipse(-5, 0, radius, radius * 0.7, 0, 0, Math.PI * 2);
       ctx.fill();
 
       // Layer 3: Glow
-      ctx.shadowBlur = 10; // Moderate Glow
-      ctx.shadowColor = "#ff0000";
+      ctx.shadowBlur = 15; // Stronger Glow
+      ctx.shadowColor = "#ff2200";
       ctx.strokeStyle = "#ff4500";
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.arc(0, 0, radius, 0, Math.PI * 2); // Outer ring
       ctx.stroke();
 
-      // Particles (Dripping Lava)
-      if (Math.random() > 0.7) {
-        createParticle(p.x, p.y, "#ff4500", 2, 10);
+      // Particles (Dripping Lava) - Increased Frequency
+      if (Math.random() > 0.5) {
+        createParticle(p.x, p.y, "#ffaa00", 2, 15); // Sparks
+      }
+      if (Math.random() > 0.8) {
+         createParticle(p.x, p.y, "#550000", 1, 30, "debris"); // Ash/Rock
       }
 
       ctx.restore();
@@ -1354,25 +1383,28 @@ const drawProjectiles = (ctx) => {
 
       // Draw Bullet
       ctx.beginPath();
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 5, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
       ctx.fill();
-      // Glow
-      ctx.shadowBlur = 10;
+      
+      // Intense Laser Glow
+      ctx.shadowBlur = 15;
       ctx.shadowColor = "#00f3ff";
       ctx.strokeStyle = "#00f3ff";
+      ctx.lineWidth = 2;
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Spawn Long-Lasting Trail Particle (Backfill for continuous line)
-      // Speed 2500 / 60 fps = ~41 pixels per frame. Backfill to close gaps.
-      // Spawn Long-Lasting Trail Particle (Backfill for continuous line)
-      // Speed 2500 / 60 fps = ~41 pixels per frame. Backfill to close gaps.
-      for (let i = 0; i < 5; i++) {
-        // Interpolate backwards
-        // Assuming 60fps delta (0.016s)
+      // Spawn Dense Trail (Continuous Line Effect)
+      // We spawn MORE particles per frame to fill gaps
+      // Spawn "Laser Beam" Segments (Seamless Line)
+      // We spawn overlapping segments to create a solid beam
+      const steps = 5; 
+      const angle = Math.atan2(p.vy, p.vx);
+      
+      for (let i = 0; i < steps; i++) {
         const dt = 0.016;
-        const offset = i / 5;
+        const offset = i / steps;
         const bx = p.x - p.vx * dt * offset;
         const by = p.y - p.vy * dt * offset;
 
@@ -1381,11 +1413,13 @@ const drawProjectiles = (ctx) => {
           y: by,
           vx: 0,
           vy: 0,
-          life: 90,
-          maxLife: 90,
-          color: "rgba(0, 243, 255, 0.6)",
-          id: Date.now() + Math.random(),
-          type: "trail",
+          life: 30, // Short life (instant fade feeling)
+          maxLife: 30,
+          color: "rgba(0, 243, 255, 1.0)", // Solid Cyan
+          type: "laser_beam",
+          angle: angle,
+          width: 50, // Length of segment
+          height: 6  // Thickness
         });
       }
       return;

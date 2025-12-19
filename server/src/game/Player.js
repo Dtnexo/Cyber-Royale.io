@@ -385,23 +385,24 @@ class Player {
       }, 3000);
     } else if (name === "Magma") {
       duration = 500;
-      // Lava Wave: 3 Projectiles Fan
+      // Lava Wave: 5 Projectiles Fan (Buffed)
       const projs = [];
-      const fanAngle = 0.3; // Spread
-      for (let i = -1; i <= 1; i++) {
+      const fanAngle = 0.25; // Slightly tighter spread for 5 shots
+      // Fan from -2 to 2 (5 shots)
+      for (let i = -2; i <= 2; i++) {
         const angle = this.mouseAngle + i * fanAngle;
         projs.push(
           this.createProjectile(
             this.x,
             this.y,
             angle,
-            700, // speed
+            750, // speed (Buffed from 700)
             1500, // life
-            80, // damage
-            "#ff4500", // color (example for lava)
-            10, // radius
+            95, // damage (Buffed from 80)
+            "#ff4500", // color
+            12, // radius (Slightly larger)
             "LAVA_WAVE",
-            true // penetrateEnemies (handled by type in server)
+            true // penetrateEnemies
           )
         );
       }
