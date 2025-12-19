@@ -90,7 +90,12 @@ const retryConnection = async () => {
         <span class="neon-text">OPERATIVE: {{ auth.user?.username }}</span>
         <span class="coins">CREDITS: {{ auth.user?.coins }}</span>
       </div>
-      <button @click="logout" class="btn btn-secondary">LOGOUT</button>
+      <div class="header-actions">
+        <button @click="router.push('/settings')" class="btn btn-secondary">
+          SETTINGS
+        </button>
+        <button @click="logout" class="btn btn-secondary">LOGOUT</button>
+      </div>
     </header>
 
     <div class="container">
@@ -187,7 +192,7 @@ const retryConnection = async () => {
 
 <style scoped>
 /* COCKPIT / HUD THEME */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap");
 
 :root {
   --neon-cyan: #00f3ff;
@@ -200,13 +205,16 @@ const retryConnection = async () => {
 .dashboard-page {
   min-height: 100vh;
   background-color: #020205;
-  background-image: 
-    radial-gradient(circle at 50% 50%, rgba(0, 243, 255, 0.05) 0%, transparent 60%),
+  background-image: radial-gradient(
+      circle at 50% 50%,
+      rgba(0, 243, 255, 0.05) 0%,
+      transparent 60%
+    ),
     linear-gradient(rgba(0, 255, 255, 0.02) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 255, 255, 0.02) 1px, transparent 1px);
   background-size: 100% 100%, 40px 40px, 40px 40px;
   color: #fff;
-  font-family: 'Rajdhani', sans-serif;
+  font-family: "Rajdhani", sans-serif;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -218,9 +226,13 @@ const retryConnection = async () => {
   content: "";
   position: absolute;
   inset: 0;
-  background: 
-    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
-    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+    linear-gradient(
+      90deg,
+      rgba(255, 0, 0, 0.06),
+      rgba(0, 255, 0, 0.02),
+      rgba(0, 0, 255, 0.06)
+    );
   background-size: 100% 2px, 3px 100%;
   pointer-events: none;
   z-index: 5;
@@ -235,9 +247,30 @@ const retryConnection = async () => {
   left: -50%;
   width: 200%;
   height: 200%;
-  background-image: 
-    linear-gradient(0deg, transparent 24%, rgba(0, 243, 255, 0.05) 25%, rgba(0, 243, 255, 0.05) 26%, transparent 27%, transparent 74%, rgba(0, 243, 255, 0.05) 75%, rgba(0, 243, 255, 0.05) 76%, transparent 77%, transparent), 
-    linear-gradient(90deg, transparent 24%, rgba(0, 243, 255, 0.05) 25%, rgba(0, 243, 255, 0.05) 26%, transparent 27%, transparent 74%, rgba(0, 243, 255, 0.05) 75%, rgba(0, 243, 255, 0.05) 76%, transparent 77%, transparent);
+  background-image: linear-gradient(
+      0deg,
+      transparent 24%,
+      rgba(0, 243, 255, 0.05) 25%,
+      rgba(0, 243, 255, 0.05) 26%,
+      transparent 27%,
+      transparent 74%,
+      rgba(0, 243, 255, 0.05) 75%,
+      rgba(0, 243, 255, 0.05) 76%,
+      transparent 77%,
+      transparent
+    ),
+    linear-gradient(
+      90deg,
+      transparent 24%,
+      rgba(0, 243, 255, 0.05) 25%,
+      rgba(0, 243, 255, 0.05) 26%,
+      transparent 27%,
+      transparent 74%,
+      rgba(0, 243, 255, 0.05) 75%,
+      rgba(0, 243, 255, 0.05) 76%,
+      transparent 77%,
+      transparent
+    );
   background-size: 100px 100px;
   transform: perspective(500px) rotateX(60deg);
   animation: grid-move 20s linear infinite;
@@ -245,8 +278,12 @@ const retryConnection = async () => {
 }
 
 @keyframes grid-move {
-  0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
-  100% { transform: perspective(500px) rotateX(60deg) translateY(100px); }
+  0% {
+    transform: perspective(500px) rotateX(60deg) translateY(0);
+  }
+  100% {
+    transform: perspective(500px) rotateX(60deg) translateY(100px);
+  }
 }
 
 /* TOP BAR */
@@ -265,7 +302,7 @@ const retryConnection = async () => {
 .user-info {
   display: flex;
   gap: 2rem;
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   letter-spacing: 2px;
   font-size: 0.9rem;
 }
@@ -278,6 +315,11 @@ const retryConnection = async () => {
 .coins {
   color: #ffd700;
   text-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+}
+
+.header-actions {
+  display: flex;
+  gap: 1rem;
 }
 
 /* MAIN CONTAINER */
@@ -295,7 +337,7 @@ const retryConnection = async () => {
 }
 
 .section-title {
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   font-size: 3rem; /* Reduced from 4rem */
   font-weight: 900;
   letter-spacing: 8px; /* Reduced */
@@ -311,8 +353,15 @@ const retryConnection = async () => {
 }
 
 @keyframes title-float {
-  0%, 100% { transform: translateY(0); filter: drop-shadow(0 0 15px rgba(0, 243, 255, 0.4)); }
-  50% { transform: translateY(-5px); filter: drop-shadow(0 0 25px rgba(0, 243, 255, 0.7)); }
+  0%,
+  100% {
+    transform: translateY(0);
+    filter: drop-shadow(0 0 15px rgba(0, 243, 255, 0.4));
+  }
+  50% {
+    transform: translateY(-5px);
+    filter: drop-shadow(0 0 25px rgba(0, 243, 255, 0.7));
+  }
 }
 
 /* GLITCH EFFECT */
@@ -345,21 +394,45 @@ const retryConnection = async () => {
 }
 
 @keyframes glitch-anim {
-  0% { clip: rect(11px, 9999px, 81px, 0); }
-  20% { clip: rect(74px, 9999px, 30px, 0); }
-  40% { clip: rect(48px, 9999px, 20px, 0); }
-  60% { clip: rect(27px, 9999px, 66px, 0); }
-  80% { clip: rect(32px, 9999px, 92px, 0); }
-  100% { clip: rect(85px, 9999px, 58px, 0); }
+  0% {
+    clip: rect(11px, 9999px, 81px, 0);
+  }
+  20% {
+    clip: rect(74px, 9999px, 30px, 0);
+  }
+  40% {
+    clip: rect(48px, 9999px, 20px, 0);
+  }
+  60% {
+    clip: rect(27px, 9999px, 66px, 0);
+  }
+  80% {
+    clip: rect(32px, 9999px, 92px, 0);
+  }
+  100% {
+    clip: rect(85px, 9999px, 58px, 0);
+  }
 }
 
 @keyframes glitch-anim2 {
-  0% { clip: rect(69px, 9999px, 73px, 0); }
-  20% { clip: rect(4px, 9999px, 86px, 0); }
-  40% { clip: rect(87px, 9999px, 14px, 0); }
-  60% { clip: rect(6px, 9999px, 27px, 0); }
-  80% { clip: rect(10px, 9999px, 2px, 0); }
-  100% { clip: rect(58px, 9999px, 91px, 0); }
+  0% {
+    clip: rect(69px, 9999px, 73px, 0);
+  }
+  20% {
+    clip: rect(4px, 9999px, 86px, 0);
+  }
+  40% {
+    clip: rect(87px, 9999px, 14px, 0);
+  }
+  60% {
+    clip: rect(6px, 9999px, 27px, 0);
+  }
+  80% {
+    clip: rect(10px, 9999px, 2px, 0);
+  }
+  100% {
+    clip: rect(58px, 9999px, 91px, 0);
+  }
 }
 
 .main-panel {
@@ -381,31 +454,30 @@ const retryConnection = async () => {
   text-align: center;
   backdrop-filter: blur(20px);
   border-radius: 4px; /* Slight round */
-  
+
   /* Cyber Corners */
   clip-path: polygon(
-    20px 0, 100% 0, 
-    100% calc(100% - 20px), calc(100% - 20px) 100%, 
-    0 100%, 0 20px
+    20px 0,
+    100% 0,
+    100% calc(100% - 20px),
+    calc(100% - 20px) 100%,
+    0 100%,
+    0 20px
   );
-  
-  box-shadow: 
-    0 0 30px rgba(0, 243, 255, 0.1),
-    inset 0 0 60px rgba(0, 0, 0, 0.5);
-  
+
+  box-shadow: 0 0 30px rgba(0, 243, 255, 0.1), inset 0 0 60px rgba(0, 0, 0, 0.5);
+
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
 .hero-display-card:hover {
   transform: translateY(-5px) scale(1.01);
-  box-shadow: 
-    0 0 50px rgba(0, 243, 255, 0.2),
-    inset 0 0 40px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 50px rgba(0, 243, 255, 0.2), inset 0 0 40px rgba(0, 0, 0, 0.3);
   border-color: rgba(0, 243, 255, 0.6);
 }
 
 .hero-name {
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   font-size: 4rem; /* Reduced from 5rem */
   font-weight: 900;
   margin: 0;
@@ -417,7 +489,7 @@ const retryConnection = async () => {
 }
 
 .cyber-header {
-  font-family: 'Rajdhani', sans-serif;
+  font-family: "Rajdhani", sans-serif;
   color: rgba(0, 243, 255, 0.7);
   font-size: 0.9rem;
   letter-spacing: 4px;
@@ -432,7 +504,7 @@ const retryConnection = async () => {
   background: rgba(0, 243, 255, 0.1);
   border: 1px solid #00f3ff;
   color: #00f3ff;
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   font-size: 0.8rem;
   letter-spacing: 2px;
   text-transform: uppercase;
@@ -452,16 +524,30 @@ const retryConnection = async () => {
 .stats-box::before {
   content: "";
   position: absolute;
-  top: 0; left: 0; width: 100%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(0, 243, 255, 0.05), transparent);
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 243, 255, 0.05),
+    transparent
+  );
   transform: translateX(-100%);
   animation: shine 3s infinite;
 }
 
 @keyframes shine {
-  0% { transform: translateX(-100%); }
-  20% { transform: translateX(100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  20% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .label {
@@ -478,7 +564,7 @@ const retryConnection = async () => {
   font-size: 1.2rem;
   font-weight: 700;
   text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
-  font-family: 'Rajdhani', sans-serif;
+  font-family: "Rajdhani", sans-serif;
 }
 
 /* BUTTONS */
@@ -489,7 +575,7 @@ const retryConnection = async () => {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.6);
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   letter-spacing: 3px;
   text-transform: uppercase;
   cursor: pointer;
@@ -508,11 +594,16 @@ const retryConnection = async () => {
 .change-btn::after {
   content: "";
   position: absolute;
-  bottom: 0; left: 0; width: 0%; height: 2px;
+  bottom: 0;
+  left: 0;
+  width: 0%;
+  height: 2px;
   background: #00f3ff;
   transition: width 0.3s ease;
 }
-.change-btn:hover::after { width: 100%; }
+.change-btn:hover::after {
+  width: 100%;
+}
 
 /* MODE SELECTOR */
 .mode-selector {
@@ -527,11 +618,18 @@ const retryConnection = async () => {
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 0.8rem; /* Compact padding */
   cursor: pointer;
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   color: #666;
   text-align: center;
   transition: all 0.3s;
-  clip-path: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
+  clip-path: polygon(
+    15px 0,
+    100% 0,
+    100% calc(100% - 15px),
+    calc(100% - 15px) 100%,
+    0 100%,
+    0 15px
+  );
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -558,7 +656,7 @@ const retryConnection = async () => {
 
 .mode-btn .sub {
   display: block;
-  font-family: 'Rajdhani', sans-serif;
+  font-family: "Rajdhani", sans-serif;
   font-size: 0.7rem;
   margin-top: 0.3rem;
   color: #00f3ff;
@@ -582,11 +680,18 @@ const retryConnection = async () => {
   justify-content: center;
   align-items: center;
   gap: 10px;
-  font-family: 'Orbitron';
+  font-family: "Orbitron";
   cursor: pointer;
   transition: all 0.3s;
   font-size: 0.9rem;
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  clip-path: polygon(
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%,
+    0 10px
+  );
 }
 
 .rank-btn:hover {
@@ -596,7 +701,7 @@ const retryConnection = async () => {
 
 .start-btn {
   flex: 1; /* Equal width for symmetry */
-  font-family: 'Orbitron', sans-serif;
+  font-family: "Orbitron", sans-serif;
   font-weight: 900;
   font-size: 1.4rem; /* Adjusted for width */
   letter-spacing: 3px;
@@ -605,7 +710,14 @@ const retryConnection = async () => {
   border: none;
   padding: 1rem;
   cursor: pointer;
-  clip-path: polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px);
+  clip-path: polygon(
+    20px 0,
+    100% 0,
+    100% calc(100% - 20px),
+    calc(100% - 20px) 100%,
+    0 100%,
+    0 20px
+  );
   box-shadow: 0 0 30px rgba(0, 243, 255, 0.4);
   transition: all 0.2s;
   position: relative;
@@ -624,21 +736,36 @@ const retryConnection = async () => {
 .start-btn::after {
   content: "";
   position: absolute;
-  top: -50%; left: -50%; width: 200%; height: 200%;
-  background: linear-gradient(45deg, transparent, rgba(255,255,255,0.8), transparent);
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    45deg,
+    transparent,
+    rgba(255, 255, 255, 0.8),
+    transparent
+  );
   transform: rotate(45deg) translateY(-100%);
   animation: shimmer 3s infinite;
 }
 
 @keyframes shimmer {
-  0% { transform: rotate(45deg) translateY(-100%); }
-  20% { transform: rotate(45deg) translateY(100%); }
-  100% { transform: rotate(45deg) translateY(100%); }
+  0% {
+    transform: rotate(45deg) translateY(-100%);
+  }
+  20% {
+    transform: rotate(45deg) translateY(100%);
+  }
+  100% {
+    transform: rotate(45deg) translateY(100%);
+  }
 }
 
 /* ERROR & LOADING */
-.loading-state, .error-banner {
-  font-family: 'Orbitron';
+.loading-state,
+.error-banner {
+  font-family: "Orbitron";
   font-size: 1.5rem;
   letter-spacing: 2px;
   text-shadow: 0 0 10px #ff0000;
@@ -652,14 +779,36 @@ const retryConnection = async () => {
   pointer-events: none;
   z-index: 1;
 }
-.bg-watermark.left { left: 10%; top: 50%; transform: translate(-50%, -50%); width: 600px; height: 600px; background: url('/logo_icon-removebg.png') no-repeat center/contain; }
-.bg-watermark.right { right: 10%; top: 50%; transform: translate(50%, -50%); width: 600px; height: 600px; background: url('/logo_icon-removebg.png') no-repeat center/contain; }
+.bg-watermark.left {
+  left: 10%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: url("/logo_icon-removebg.png") no-repeat center/contain;
+}
+.bg-watermark.right {
+  right: 10%;
+  top: 50%;
+  transform: translate(50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: url("/logo_icon-removebg.png") no-repeat center/contain;
+}
 
 /* RESPONSIVE */
 @media (max-width: 768px) {
-  .hero-name { font-size: 3rem; }
-  .action-dock { flex-direction: column; }
-  .start-btn { font-size: 1.5rem; }
-  .main-panel { max-width: 90%; }
+  .hero-name {
+    font-size: 3rem;
+  }
+  .action-dock {
+    flex-direction: column;
+  }
+  .start-btn {
+    font-size: 1.5rem;
+  }
+  .main-panel {
+    max-width: 90%;
+  }
 }
 </style>
