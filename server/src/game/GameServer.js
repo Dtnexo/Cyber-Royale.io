@@ -110,6 +110,12 @@ class GameServer {
               }
             }
 
+            // CRITICAL FIX: If hero ID is invalid/missing, fallback to default immediately
+            if (!hero) {
+               console.warn(`[SERVER] Hero ID ${heroId} not found. Defaulting to free hero.`);
+               hero = await Hero.findOne({ where: { price: 0 } });
+            }
+
             if (hero && !isAllowed) {
               console.warn(
                 `[SECURITY] User ${username} tried to use unauthorized hero ${hero.name}.`
@@ -299,11 +305,11 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE" || item.type === "SEISMIC_SLAM") {
+              } else if (item.type === "SHOCKWAVE" || item.type === "SEISMIC_SLAM" || item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
-                  if (p.isDead) continue;
+                  if (p.isDead || p.isPhasing) continue; // Phasing Immunity
 
                   const dx = p.x - item.x;
                   const dy = p.y - item.y;
@@ -381,7 +387,7 @@ class GameServer {
                 }
                 // Emulate Visual Explosion
                 this.io.emit("visual_effect", {
-                  type: "shockwave",
+                  type: (item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") ? item.type : "shockwave",
                   x: item.x,
                   y: item.y,
                   radius: item.radius,
@@ -591,7 +597,7 @@ class GameServer {
             // Damage & Knockback
             for (const [pid, target] of this.players) {
               if (pid === player.id) continue;
-              if (target.isDead) continue;
+              if (target.isDead || target.isPhasing) continue; // Phasing Immunity
 
               const dx = target.x - player.x;
               const dy = target.y - player.y;
@@ -711,7 +717,7 @@ class GameServer {
             const range = 300;
 
             for (const [tid, target] of this.players) {
-              if (tid === player.id || target.isDead) continue;
+              if (tid === player.id || target.isDead || target.isPhasing) continue; // Phasing Immunity
 
               const dist = Math.hypot(target.x - player.x, target.y - player.y);
               if (dist < range) {
@@ -782,6 +788,8 @@ class GameServer {
           freezeEndTime: player.freezeEndTime || 0,
           isPoisoned: player.isPoisoned, // SEND TO CLIENT
           isMarked: player.isMarked,
+          staticFieldActive: player.staticFieldActive, // FOR VOLT ANIMATION
+          hasFireTrail: player.hasFireTrail, // BLAZE ANIMATION
           skillCD: player.cooldowns.skill,
           username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
@@ -819,10 +827,61 @@ class GameServer {
             }
           }
         } else if (ent.type === "DECOY") {
+          // Decoy logic if needed
+        } else if (ent.type === "TRAIL_SEGMENT") {
+             // Lifetime
+             ent.life -= 30; // 30ms tick
+             if (ent.life <= 0) {
+                 this.entities.splice(i, 1);
+                 continue;
+             }
+             
+             // Damage Players
+             for (const [pid, p] of this.players) {
+                 if (pid === ent.ownerId) continue;
+                 if (p.isDead || p.isPhasing) continue; // Phasing immune
+                 if (p.invincible) continue;
+                 
+                 const dist = Math.hypot(p.x - ent.x, p.y - ent.y);
+                 if (dist < 25) { // Increased Hitbox (User Request)
+                     // Apply Damage
+                     // Increased damage per tick (Buffed 4 -> 12)
+                     p.takeDamage(12); 
+                     // No knockback, just burn.
+                 }
+             }
         }
       }
 
-      // 2. Update Projectiles
+      // 0. Update Players & Handle Generic Dot/Aura effects
+      for (const [id, p] of this.players) {
+        if (p.staticFieldActive) {
+          
+          // NEW VOLT LOGIC: Spawning Trail Segments (Server Side)
+          // We need to track lastTrailPos on player object.
+          // Check distance
+          const lx = p.lastTrailX || p.x;
+          const ly = p.lastTrailY || p.y;
+          const dist = Math.hypot(p.x - lx, p.y - ly);
+          
+          if (dist > 10) { // Spawn every 10px (Dense line)
+              this.entities.push({
+                  type: "TRAIL_SEGMENT",
+                  x: p.x,
+                  y: p.y,
+                  ownerId: id,
+                  life: 3000, // Duration
+                  damage: 12,
+                  radius: 15, // Larger Visual (User Request)
+                  color: "#00f3ff" // Electric Blue
+              });
+              p.lastTrailX = p.x;
+              p.lastTrailY = p.y;
+          }
+        }
+      }
+
+      // 1. Move Projectiles
       for (let i = this.projectiles.length - 1; i >= 0; i--) {
         const p = this.projectiles[i];
 
@@ -834,6 +893,22 @@ class GameServer {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
+
+        // DECOY COLLISION (User Request)
+        for (let j = this.entities.length - 1; j >= 0; j--) {
+           const ent = this.entities[j];
+           if (ent.type === "DECOY" && ent.ownerId !== p.ownerId) {
+             if (Math.hypot(p.x - ent.x, p.y - ent.y) < 30) {
+                 ent.hp -= p.damage;
+                 p.life = 0; // Destroy projectile
+                 this.io.emit("visual_effect", { type: "hit", x: p.x, y: p.y, color: "#fff" });
+                 if (ent.hp <= 0) {
+                     this.entities.splice(j, 1);
+                 }
+                 break;
+             }
+           }
+        }
 
         // FRICTION LOGIC (Techno Mines)
         if (p.friction) {
@@ -992,6 +1067,7 @@ class GameServer {
         for (const [id, player] of this.players) {
           if (p.ownerId === id) continue; // Don't hit self
           if (player.isDead) continue; // Ghost Mode: Bullets pass through dead players
+          if (player.isPhasing) continue; // GHOST/SPECTRE PHASING: Bullets pass through
 
           // Raycast Collision (Segment vs Circle)
           // Fixes Tunneling for high-speed projectiles (Sniper)
@@ -1145,7 +1221,7 @@ class GameServer {
           // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
           // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
           if (ent.ownerId === id) continue;
-          if (player.isDead) continue; // Ghost Mode
+          if (player.isDead || player.isPhasing) continue; // Phasing Immunity
 
           const dx = ent.x - player.x;
           const dy = ent.y - player.y;
@@ -1197,6 +1273,7 @@ class GameServer {
       }
 
       // Emit to room
+      state.entities = this.entities; // CRITICAL FIX: Send entities (decoy, trail) to client
       this.io.to("game_room").emit("server_update", state);
     }, 30);
   }

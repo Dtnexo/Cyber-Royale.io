@@ -436,6 +436,14 @@ onMounted(async () => {
       // SUPERNOVA VISUALS
       createSupernova(data.x, data.y, "#da70d6");
       addScreenShake(30, 30); // MAX INTENSITY
+    } else if (data.type === "FEAR_WAVE") {
+      createShockwave(data.x, data.y, "#4b0082"); // Indigo
+      spawnExplosion(data.x, data.y, "#4b0082");
+      addScreenShake(10, 10);
+    } else if (data.type === "WARP_BLAST") {
+      createShockwave(data.x, data.y, "#00fa9a"); // Spring Green
+      spawnExplosion(data.x, data.y, "#00fa9a");
+      addScreenShake(15, 10);
     } else if (data.type === "supernova_cast") {
       // CHARGE UP (Implosion)
       shockwaves.push({
@@ -1500,6 +1508,9 @@ const drawPlayer = (ctx, p) => {
     // If visible (Self or Hit), set Ghost Alpha
     if (p.id === myId) ctx.globalAlpha = 0.4;
     else ctx.globalAlpha = 0.6;
+  } else if (p.isPhasing || (p.hero === "Ghost" && p.isSkillActive)) {
+     // GHOST PHASING TRANSPARENCY
+     ctx.globalAlpha = 0.4;
   }
 
   ctx.translate(screenX, screenY);
@@ -1609,6 +1620,8 @@ const drawPlayer = (ctx, p) => {
 
     ctx.restore();
   }
+
+
 
   // Volumetric Energy Glow (Ready Indicator)
   if ((p.skillCD || 0) <= 0) {
@@ -2353,6 +2366,65 @@ const drawMarkers = (ctx) => {
   });
 };
 
+const drawFireTrails = (ctx) => {
+  players.forEach((p) => {
+    if (!p.hasFireTrail) return;
+
+    if (!playerVisuals.value[p.id]) playerVisuals.value[p.id] = {};
+    const visuals = playerVisuals.value[p.id];
+    if (!visuals.trail) visuals.trail = [];
+
+    // Add point
+    visuals.trail.push({ x: p.x, y: p.y, time: Date.now() });
+
+    // Prune old points
+    const now = Date.now();
+    visuals.trail = visuals.trail.filter((pt) => now - pt.time < 500); // 0.5s trail
+
+    if (visuals.trail.length < 2) return;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // 1. Heat Haze / Glow (Red/Orange)
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ff4500";
+    ctx.strokeStyle = "rgba(255, 69, 0, 0.6)"; // Red-Orange
+    ctx.lineWidth = 14;
+    
+    ctx.beginPath();
+    visuals.trail.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+
+    // 2. Core (Yellow/White)
+    ctx.shadowBlur = 5;
+    ctx.shadowColor = "#FFFF00";
+    ctx.strokeStyle = "#FFFF00"; // Yellow
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    visuals.trail.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+
+    ctx.restore();
+    
+    // Add smoke particles
+     if (Math.random() < 0.1) {
+         createParticle(p.x, p.y, "#555", 1, 30, "smoke");
+     }
+  });
+};
+
 const loop = (ctx) => {
   // Update Camera
   let target = players.find((p) => p.id === myId);
@@ -2410,6 +2482,9 @@ const loop = (ctx) => {
   // 2. Floor Decoration (Crates, Items) - UNDER Players
   drawFloorDeco(ctx);
 
+  // 2.5 Fire Trails (Blaze) - Rendered as Ribbon
+  drawFireTrails(ctx);
+
   // 3. Projectiles MOVED AFTER BUSHES for visibility
   // drawProjectiles(ctx); MOVED
 
@@ -2456,14 +2531,12 @@ const loop = (ctx) => {
       }
       ctx.restore();
     } else if (ent.type === "DECOY") {
-      // Draw Decoy (REALISTIC: Identical to real player)
+      // Draw Decoy
       ctx.save();
-      // ctx.globalAlpha = 1.0; // Default opacity for realism
-      // Reuse drawPlayer logic
       const fakePlayer = {
         ...ent,
-        id: ent.ownerId || "decoy", // Pass ID for potential logic (but not invisibility)
-        angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
+        id: ent.ownerId || "decoy",
+        angle: Math.atan2(ent.vy, ent.vx),
         hero: ent.heroName,
         heroClass: ent.heroClass,
         shield: false,
@@ -2471,6 +2544,51 @@ const loop = (ctx) => {
       };
       drawPlayer(ctx, fakePlayer);
       ctx.restore();
+    } else if (ent.type === "TRAIL_SEGMENT") {
+        // Render Volt Trail (Enhanced Visibility)
+        const sx = ent.x - cameraX;
+        const sy = ent.y - cameraY;
+        const ratio = Math.max(0, ent.life / 3000); // 3s max life
+        
+        if (ratio <= 0) return;
+
+        ctx.save();
+        ctx.globalAlpha = ratio; // Smooth fade
+
+        // Pulse Effect
+        const pulse = 1 + Math.sin(Date.now() / 100) * 0.2;
+
+        // Outer Glow (Large \u0026 Soft)
+        ctx.shadowColor = ent.color || "#00f3ff";
+        ctx.shadowBlur = 20 * pulse;
+        
+        ctx.fillStyle = ent.color || "#00f3ff";
+        ctx.beginPath();
+        ctx.arc(sx, sy, (ent.radius || 8) * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Inner Core (White Hot)
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, (ent.radius || 8) * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+        
+        // Occasional Spark from trail (Visual Noise)
+        if (Math.random() < 0.05) {
+             particles.push({
+               x: ent.x,
+               y: ent.y,
+               vx: (Math.random() - 0.5) * 20,
+               vy: (Math.random() - 0.5) * 20 + -10, // Upward drift
+               life: 0.4,
+               maxLife: 0.4,
+               color: "#00f3ff",
+               type: "spark"
+           });
+        }
     }
   });
 
@@ -2502,8 +2620,12 @@ const loop = (ctx) => {
     }
   });
 
+
+
   // 8. DRAW WALLS (Over Bushes, Occluding them)
   drawWalls(ctx);
+
+
 
   // 8.5. PHASING PLAYERS (Ghost/Spectre Capability)
   // Draw them *over* walls if they are using their ability.
@@ -2557,7 +2679,7 @@ if (canvasRef.value) {
     <canvas ref="canvasRef" class="game-canvas"></canvas>
 
     <!-- QUEUE OVERLAY (Matchmaking) -->
-    <div v-if="inQueue" class="queue-overlay">
+    <div v-if="inQueue && route.query.mode === 'battle_royale'" class="queue-overlay">
       <div class="radar-container">
         <div class="radar-sweep"></div>
         <div class="radar-grid"></div>

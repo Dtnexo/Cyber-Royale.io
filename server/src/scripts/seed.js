@@ -37,7 +37,7 @@ async function seed() {
           { name: "Shadow", value: "#1a1a1a" },
           { name: "Ghost White", value: "#ffffff" },
         ],
-        stats: { hp: 85, speed: 155, cooldown: 5000 }, // Buffed HP/Speed, Lower CD for Dash
+        stats: { hp: 130, speed: 160, cooldown: 5000 },
       },
       {
         id: 3,
@@ -82,7 +82,7 @@ async function seed() {
           { name: "Default", value: "#00ffff" },
           { name: "Overload", value: "#ff00ff" },
         ],
-        stats: { hp: 75, speed: 170, cooldown: 4000 }, // Buffed Speed
+        stats: { hp: 120, speed: 180, cooldown: 4000 },
       },
       {
         id: 7,
@@ -104,7 +104,7 @@ async function seed() {
           { name: "Default", value: "#add8e6" },
           { name: "Phantom", value: "#4b0082" },
         ],
-        stats: { hp: 80, speed: 160, cooldown: 5000 }, // Buffed Speed
+        stats: { hp: 125, speed: 165, cooldown: 5000 },
       },
       {
         id: 9,
@@ -237,7 +237,7 @@ async function seed() {
           { name: "Default", value: "#9370db" },
           { name: "Illusion", value: "#e6e6fa" }
         ],
-        stats: { hp: 80, speed: 165, cooldown: 5000 }
+        stats: { hp: 125, speed: 170, cooldown: 5000 }
       },
       {
         id: 21,
@@ -248,7 +248,7 @@ async function seed() {
           { name: "Default", value: "#00fa9a" },
           { name: "Quantum", value: "#48d1cc" }
         ],
-        stats: { hp: 75, speed: 170, cooldown: 4000 }
+        stats: { hp: 120, speed: 175, cooldown: 4000 }
       }
     ];
 

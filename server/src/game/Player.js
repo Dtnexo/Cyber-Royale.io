@@ -76,6 +76,8 @@ class Player {
     this.hp += 120; // Heal on pickup
   }
 
+
+
   update(dt) {
     // Regenerate HP
     this.regenerate(dt);
@@ -83,6 +85,21 @@ class Player {
     // Cooldown tick
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
+
+    // VOLT: STATIC FIELD DAMAGE
+    if (this.staticFieldActive) {
+        if (!this.lastStaticZap) this.lastStaticZap = 0;
+        const now = Date.now();
+        if (now - this.lastStaticZap > 200) { // Zap every 0.2s
+            this.lastStaticZap = now;
+            // The Player class doesn't have access to other players list directly.
+            // We must mark this state for the GameServer to handle, OR return a 'result' from update?
+            // Player.update() usually doesn't return results. 
+            // Better approach: GameServer handles the damage look via a flag, OR we use a flag here.
+            // Wait, I see 'stormActive' logic in GameServer being handled there. 
+            // Let's use the same pattern: 'staticFieldActive' flag is checked in GameServer.
+        }
+    }
 
     if (this.isRooted) return; // Skip movement
 
@@ -98,6 +115,7 @@ class Player {
       const nextX = this.x + dx;
       let colX = false;
       if (!this.isPhasing) {
+
         const pRect = { x: nextX - 20, y: this.y - 20, w: 40, h: 40 };
         const obstacles = this.currentMapObstacles || [];
         for (const obs of obstacles) {
@@ -154,8 +172,8 @@ class Player {
 
     // Fire rate: 0.3s normally
     // Blaze: 0.05s (Super Fast)
-    // Brawler/Others: 0.15s (Moderate)
-    let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
+    // Ghost/Brawler (Rapid Fire): 0.09s (Hyper Fast)
+    let rapidDelay = this.hero.name === "Blaze" ? 50 : 90; // Reduced from 150 to 90 (User Request)
     this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
     const speed = this.minesActive ? 600 : 600; // Reduced Mine Speed to 600 (User Request)
@@ -274,60 +292,55 @@ class Player {
 
     // === SPEED ===
     else if (name === "Spectre") {
-      duration = 750;
-      this.cooldowns.skill += 4000;
-      // Phantom Dash: High Speed + Wall Phasing
-      this.speed = this.baseSpeed * 3.5;
-      this.isPhasing = true; // Pass through walls
+      duration = 1500;
+      this.cooldowns.skill += 6000;
+      // PHASE SHIFT: Invulnerability + Super Speed + Phase
+      this.speed = this.baseSpeed * 3;
+      this.isPhasing = true; 
+      this.isInvincible = true; // New Buff
       setTimeout(() => {
         this.speed = this.baseSpeed;
         this.isPhasing = false;
-        this.checkUnstuck(); // Ensure not stuck in wall
-      }, 750);
+        this.isInvincible = false;
+        this.checkUnstuck();
+      }, 1500);
     } else if (name === "Volt") {
-      this.cooldowns.skill += 2500;
-      duration = 2500;
-      // Overload
+      this.cooldowns.skill += 4000;
+      duration = 3000;
+      // STATIC DISCHARGE: Speed + Auto-Zap Nearby Enemies
       this.speed = this.baseSpeed * 2.5;
-      setTimeout(() => (this.speed = this.baseSpeed), 2500);
+      this.staticFieldActive = true; // Handled in update loop
+      this.lastTrailX = this.x; // CRITICAL FIX: Initialize for distance check
+      this.lastTrailY = this.y;
+      
+      // Auto-damage logic needs to be in update loop, but for now we set the flag
+      setTimeout(() => {
+        this.speed = this.baseSpeed;
+        this.staticFieldActive = false;
+      }, 3000);
     } else if (name === "Ghost") {
-      console.log(
-        "[SERVER] Ghost ability triggered! Current marker:",
-        this.teleportMarker
-      );
+       console.log("[SERVER] Ghost Phasing Triggered");
+       this.cooldowns.skill += 5000;
+       
+       // PHASE SHIFT: Speed + Phasing + Rapid Fire (No Teleport)
+       // "Transparent, tout lui traverse, plus rapide, tire plus vite"
+       
+       this.speed = this.baseSpeed * 1.5; // Speed Boost
+       this.isPhasing = true; // Immunity
+       this.rapidFire = true; // Fast Fire
+       this.isSkillActive = true; // Visuals
 
-      // GHOST TELEPORT MARKER SYSTEM (User Request)
-      // Stage 1: Place marker at current position
-      // Stage 2: Teleport to marker + shockwave
+       setTimeout(() => {
+           this.speed = this.baseSpeed;
+           this.isPhasing = false;
+           this.rapidFire = false;
+           this.isSkillActive = false;
+           this.checkUnstuck(); // Fix: Teleport out of wall if stuck
+       }, 3000); // 3s Duration
 
-      if (!this.teleportMarker) {
-        // STAGE 1: Place Marker
-        this.teleportMarker = { x: this.x, y: this.y };
-
-        // Cooldown 1.5s (User Request)
-        this.cooldowns.skill += 1500;
-
-        result = null; // No global event, just marker placement
-      } else {
-        // STAGE 2: Teleport
-        this.x = this.teleportMarker.x;
-        this.y = this.teleportMarker.y;
-
-        // Remove Marker
-        this.teleportMarker = null;
-
-        // Start Real Cooldown (5s)
-        this.cooldowns.skill += 5000;
-
-        // Visual Effect (Shockwave)
-        result = {
-          type: "shockwave",
-          x: this.x,
-          y: this.y,
-          color: "#00FFFF", // Cyan ghost color
-          ownerId: this.id,
-        };
-      }
+       // Fear Wave Effect (Optional? User didn't ask to remove, but "tout lui traverse" implies passive. Keeping for impact or remove?)
+       // User said "je veux juste qu'il sois transparent...". I will remove the Fear Wave to be safe and stick to "Juste transparent + buff".
+       result = null; 
     }
 
     // === DAMAGE ===
@@ -452,10 +465,9 @@ class Player {
       setTimeout(() => (this.isPoisonous = false), 5000);
     } else if (name === "Mirage") {
       duration = 4000;
-      // Cooldown starts AFTER invisibility ends (User Request)
-      this.cooldowns.skill += 4000;
+      this.cooldowns.skill += 5000;
 
-      // Decoy: Spawn a fake player and go invisible
+      // LEGION: Spawn 3 Decoys + Stealth
       this.isInvisible = true;
       this.speed = this.baseSpeed * 1.5;
       setTimeout(() => {
@@ -463,65 +475,103 @@ class Player {
         this.speed = this.baseSpeed;
       }, 4000);
 
-      result = {
-        type: "DECOY",
-        x: this.x,
-        y: this.y,
-        ownerId: this.id,
-        heroName: this.hero.name,
-        heroClass: this.hero.class,
-        username: this.username, // ADDED: Show real name on clone
-        hp: this.hp, // FAKE HP (Visual)
-        maxHp: this.maxHp,
-        powerCores: this.powerCores, // FAKE CORES (Visual)
-        color: this.color,
-        vx: Math.cos(this.mouseAngle) * this.baseSpeed,
-        vy: Math.sin(this.mouseAngle) * this.baseSpeed,
-        life: 3000,
-      };
+      const decoys = [];
+      const spreadRadius = 150; 
+      const baseAngle = Math.random() * 6.28;
+      const angles = [
+        baseAngle,
+        baseAngle + (Math.PI * 2) / 3,
+        baseAngle + (Math.PI * 4) / 3
+      ];
+
+      const obstacles = this.currentMapObstacles || [];
+      const mapW = this.mapLimits ? this.mapLimits.width : 2000;
+      const mapH = this.mapLimits ? this.mapLimits.height : 2000;
+
+      for (let offset of angles) {
+        let finalX = this.x + Math.cos(offset) * spreadRadius;
+        let finalY = this.y + Math.sin(offset) * spreadRadius;
+
+        // --- COLLISION \u0026 BOUNDS CHECK ---
+        // Simple Raycast from Player to Target to prevent wall clipping
+        const steps = 10;
+        let validX = this.x;
+        let validY = this.y;
+        
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const tx = this.x + (finalX - this.x) * t;
+            const ty = this.y + (finalY - this.y) * t;
+            
+            // 1. Check Bounds
+            if (tx < 50 || tx > mapW - 50 || ty < 50 || ty > mapH - 50) {
+                break; // Stop at last valid
+            }
+
+            // 2. Check Obstacles
+            let hit = false;
+            for (const obs of obstacles) {
+                if (tx > obs.x - 20 && tx < obs.x + obs.w + 20 &&
+                    ty > obs.y - 20 && ty < obs.y + obs.h + 20) {
+                    hit = true;
+                    break;
+                }
+            }
+
+            if (hit) break; // Stop at last valid
+            
+            // If safe, update valid pos
+            validX = tx;
+            validY = ty;
+        }
+        
+        finalX = validX;
+        finalY = validY;
+        // -------------------------------------
+
+        decoys.push({
+          type: "DECOY",
+          x: finalX,
+          y: finalY,
+          ownerId: this.id,
+          heroName: this.hero.name,
+          heroClass: this.hero.class,
+          username: this.username,
+          hp: this.maxHp,
+          maxHp: this.maxHp,
+          powerCores: this.powerCores,
+          color: this.color,
+          vx: Math.cos(this.mouseAngle + offset) * this.baseSpeed,
+          vy: Math.sin(this.mouseAngle + offset) * this.baseSpeed,
+          life: 3000,
+        });
+      }
+      result = decoys;
+      
     } else if (name === "Jumper") {
       duration = 500;
-      // Blink (Same as Spectre)
-      const maxDist = 350;
+      // WARP STRIKE: Teleport + Area Blast
+      const maxDist = 450;
       const targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
       const targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
 
-      // RAYCAST TELEPORT (Prevent Wall Clipping)
-      const steps = 20;
-      let safeX = this.x;
-      let safeY = this.y;
-      const obstacles = this.currentMapObstacles || [];
+      // Simple raycast/clamp
+      this.x = Math.max(0, Math.min(2000, targetX));
+      this.y = Math.max(0, Math.min(2000, targetY));
+      this.checkUnstuck();
+      
+      this.cooldowns.skill += 3500;
 
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const tx = this.x + (targetX - this.x) * t;
-        const ty = this.y + (targetY - this.y) * t;
-
-        // Check Point Collision (simpler for teleport)
-        let hit = false;
-        for (const obs of obstacles) {
-          if (
-            tx > obs.x &&
-            tx < obs.x + obs.w &&
-            ty > obs.y &&
-            ty < obs.y + obs.h
-          ) {
-            hit = true;
-            break;
-          }
-        }
-        if (hit) {
-          // Backtrack slightly to avoid being ON the wall edge
-          break;
-        }
-        safeX = tx;
-        safeY = ty;
-      }
-
-      // Clamp to Map
-      const limits = this.mapLimits || { width: 4000, height: 4000 };
-      this.x = Math.max(0, Math.min(limits.width, safeX));
-      this.y = Math.max(0, Math.min(limits.height, safeY));
+      result = {
+          type: "WARP_BLAST",
+          ownerId: this.id,
+          x: this.x,
+          y: this.y,
+          radius: 200,
+          damage: 50,
+          knockback: 600,
+          color: "#00fa9a"
+      };
     }
 
     // === SUPPORT ===
