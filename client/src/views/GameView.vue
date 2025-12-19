@@ -2425,6 +2425,67 @@ const drawFireTrails = (ctx) => {
   });
 };
 
+const drawVoltTrails = (ctx) => {
+  players.forEach((p) => {
+    if (!p.staticFieldActive) return;
+
+    if (!playerVisuals.value[p.id]) playerVisuals.value[p.id] = {};
+    const visuals = playerVisuals.value[p.id];
+    if (!visuals.voltTrail) visuals.voltTrail = [];
+
+    // Add point
+    visuals.voltTrail.push({ x: p.x, y: p.y, time: Date.now() });
+
+    // Prune old points (3s duration matches Server Trail Life)
+    const now = Date.now();
+    visuals.voltTrail = visuals.voltTrail.filter((pt) => now - pt.time < 3000);
+
+    if (visuals.voltTrail.length < 2) return;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Jitter Effect for Electricity
+    const jitter = () => (Math.random() - 0.5) * 5;
+
+    // 3. Segmented Line for Tapering Fade
+    // We draw each segment individually to control alpha/width based on age
+    visuals.voltTrail.forEach((pt, i) => {
+        if (i === 0) return;
+        const prev = visuals.voltTrail[i - 1];
+        
+        const Age = now - pt.time;
+        const Ratio = 1 - (Age / 3000); // 1.0 (New) -> 0.0 (Old)
+        if (Ratio <= 0) return;
+        
+        ctx.beginPath();
+        const j1 = jitter();
+        const j2 = jitter();
+        
+        ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+        ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+        
+        // Dynamic Style
+        ctx.lineWidth = 12 * Ratio; // Taper Width
+        ctx.strokeStyle = `rgba(0, 243, 255, ${0.4 * Ratio})`; // Fade Alpha
+        ctx.shadowBlur = 15 * Ratio;
+        ctx.stroke();
+        
+        // Inner Core (White)
+        ctx.beginPath();
+        ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+        ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${Ratio})`;
+        ctx.lineWidth = 4 * Ratio;
+        ctx.shadowBlur = 5 * Ratio;
+        ctx.stroke();
+    });
+
+    ctx.restore();
+  });
+};
+
 const loop = (ctx) => {
   // Update Camera
   let target = players.find((p) => p.id === myId);
@@ -2484,6 +2545,9 @@ const loop = (ctx) => {
 
   // 2.5 Fire Trails (Blaze) - Rendered as Ribbon
   drawFireTrails(ctx);
+
+  // 2.6 Volt Trails (Unified Electric Ribbon) - Rendered as Ribbon
+  drawVoltTrails(ctx);
 
   // 3. Projectiles MOVED AFTER BUSHES for visibility
   // drawProjectiles(ctx); MOVED
@@ -2553,7 +2617,7 @@ const loop = (ctx) => {
         if (ratio <= 0) return;
 
         ctx.save();
-        ctx.globalAlpha = ratio; // Smooth fade
+        ctx.globalAlpha = ratio * 0.1; // Reduced Visibility (Ribbon is main visual now)
 
         // Pulse Effect
         const pulse = 1 + Math.sin(Date.now() / 100) * 0.2;
