@@ -516,6 +516,8 @@ onMounted(async () => {
   window.addEventListener("mousemove", handleMouse);
   window.addEventListener("keypress", handleSkill);
   window.addEventListener("resize", handleResize);
+  window.addEventListener("wheel", preventZoomWheel, { passive: false });
+  window.addEventListener("keydown", preventZoomKeys);
 
   const ctx = canvasRef.value.getContext("2d");
 
@@ -576,6 +578,8 @@ onUnmounted(() => {
   window.removeEventListener("mousemove", handleMouse);
   window.removeEventListener("keypress", handleSkill);
   window.removeEventListener("resize", handleResize);
+  window.removeEventListener("wheel", preventZoomWheel);
+  window.removeEventListener("keydown", preventZoomKeys);
   cancelAnimationFrame(animationId);
 });
 
@@ -597,6 +601,22 @@ const handleMouse = (e) => {
 
 const handleSkill = (e) => {
   if (e.key.toLowerCase() === "e") socket.value.emit("skill_trigger");
+};
+
+// Prevent Browser Zooming
+const preventZoomWheel = (e) => {
+  if (e.ctrlKey) {
+    e.preventDefault();
+  }
+};
+
+const preventZoomKeys = (e) => {
+  if (
+    (e.ctrlKey && (e.key === "+" || e.key === "-" || e.key === "=")) ||
+    e.key === "F11" // Optional: Prevent fullscreen toggle if desired, but usually zoom is the issue
+  ) {
+    if (e.key !== "F11") e.preventDefault();
+  }
 };
 
 // --- MOBILE CONTROLS ---
@@ -1237,19 +1257,19 @@ const drawParticles = (ctx) => {
       ctx.save();
       ctx.translate(sx, sy);
       ctx.rotate(p.angle);
-      
+
       // Draw Line Segment (Rect)
       ctx.fillStyle = `rgba(0, 243, 255, ${p.life / p.maxLife})`; // Fade out
       ctx.shadowBlur = 10;
       ctx.shadowColor = "#00f3ff";
-      
+
       // Draw rectangle centered on Y, extending backwards slightly to cover gaps
-      ctx.fillRect(-p.width/2, -p.height/2, p.width, p.height);
-      
+      ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+
       // Core (White)
       ctx.fillStyle = `rgba(255, 255, 255, ${p.life / p.maxLife})`;
-      ctx.fillRect(-p.width/2, -p.height/4, p.width, p.height/2);
-      
+      ctx.fillRect(-p.width / 2, -p.height / 4, p.width, p.height / 2);
+
       ctx.restore();
     } else if (p.type === "trail") {
       // Sniper Trail Glow (User Request)
@@ -1340,9 +1360,9 @@ const drawProjectiles = (ctx) => {
     if (p.type === "LAVA_WAVE") {
       const sx = Math.floor(p.x - cameraX);
       const sy = Math.floor(p.y - cameraY);
-      
+
       // Pulsating Magma Effect
-      const pulse = Math.sin(Date.now() / 100) * 5; 
+      const pulse = Math.sin(Date.now() / 100) * 5;
       const radius = 25 + pulse; // Pulsing Size
 
       ctx.save();
@@ -1377,7 +1397,7 @@ const drawProjectiles = (ctx) => {
         createParticle(p.x, p.y, "#ffaa00", 2, 15); // Sparks
       }
       if (Math.random() > 0.8) {
-         createParticle(p.x, p.y, "#550000", 1, 30, "debris"); // Ash/Rock
+        createParticle(p.x, p.y, "#550000", 1, 30, "debris"); // Ash/Rock
       }
 
       ctx.restore();
@@ -1394,7 +1414,7 @@ const drawProjectiles = (ctx) => {
       ctx.arc(sx, sy, 5, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
       ctx.fill();
-      
+
       // Intense Laser Glow
       ctx.shadowBlur = 15;
       ctx.shadowColor = "#00f3ff";
@@ -1407,9 +1427,9 @@ const drawProjectiles = (ctx) => {
       // We spawn MORE particles per frame to fill gaps
       // Spawn "Laser Beam" Segments (Seamless Line)
       // We spawn overlapping segments to create a solid beam
-      const steps = 5; 
+      const steps = 5;
       const angle = Math.atan2(p.vy, p.vx);
-      
+
       for (let i = 0; i < steps; i++) {
         const dt = 0.016;
         const offset = i / steps;
@@ -1427,7 +1447,7 @@ const drawProjectiles = (ctx) => {
           type: "laser_beam",
           angle: angle,
           width: 50, // Length of segment
-          height: 6  // Thickness
+          height: 6, // Thickness
         });
       }
       return;
@@ -1509,68 +1529,68 @@ const drawPlayer = (ctx, p) => {
     if (p.id === myId) ctx.globalAlpha = 0.4;
     else ctx.globalAlpha = 0.6;
   } else if (p.isPhasing || (p.hero === "Ghost" && p.isSkillActive)) {
-     // GHOST PHASING TRANSPARENCY
-     ctx.globalAlpha = 0.4;
+    // GHOST PHASING TRANSPARENCY
+    ctx.globalAlpha = 0.4;
   }
 
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2);
 
-    // === VISUAL BUFFS (Hero Specific) ===
+  // === VISUAL BUFFS (Hero Specific) ===
 
-    // TITAN: Unstoppable (Gold Aura)
-    if (p.isUnstoppable) {
-      ctx.save();
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = "#ffd700"; // Gold
-      ctx.strokeStyle = "#ffd700";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      // Undo rotation for stable aura? No, circle doesn't matter.
-      ctx.arc(0, 0, 28, 0, Math.PI * 2); 
-      ctx.stroke();
-      ctx.restore();
-    }
+  // TITAN: Unstoppable (Gold Aura)
+  if (p.isUnstoppable) {
+    ctx.save();
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ffd700"; // Gold
+    ctx.strokeStyle = "#ffd700";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    // Undo rotation for stable aura? No, circle doesn't matter.
+    ctx.arc(0, 0, 28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    // BRAWLER: Vampirism (Red Aura)
-    if (p.lifestealActive) {
-      ctx.save();
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = "#ff0000";
-      ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
-      ctx.beginPath();
-      ctx.arc(0, 0, 30, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+  // BRAWLER: Vampirism (Red Aura)
+  if (p.lifestealActive) {
+    ctx.save();
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#ff0000";
+    ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 30, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
-    // CITADEL: Reflect (Spikes/Thorns)
-    if (p.reflectDamage) {
-       ctx.save();
-       ctx.strokeStyle = "#fff"; // White Spikes
-       ctx.lineWidth = 2;
-       ctx.beginPath();
-       const count = 8;
-       for(let i=0; i<count; i++) {
-          // Fixed Spikes relative to player rotation
-          const a = (i * Math.PI * 2 / count);
-          const r1 = 25;
-          const r2 = 35;
-          ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
-          ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
-       }
-       ctx.stroke();
-       ctx.restore();
+  // CITADEL: Reflect (Spikes/Thorns)
+  if (p.reflectDamage) {
+    ctx.save();
+    ctx.strokeStyle = "#fff"; // White Spikes
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const count = 8;
+    for (let i = 0; i < count; i++) {
+      // Fixed Spikes relative to player rotation
+      const a = (i * Math.PI * 2) / count;
+      const r1 = 25;
+      const r2 = 35;
+      ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
     }
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    // BLAZE: Fire Trail (Particle Spawner)
-    if (p.hasFireTrail) {
-       // Spawn particles locally 
-       // Check if visible to client (Optimization)
-       if (Math.random() < 0.3) {
-           createParticle(p.x, p.y, "#ff4500", 2, 20); // Fire color
-       }
+  // BLAZE: Fire Trail (Particle Spawner)
+  if (p.hasFireTrail) {
+    // Spawn particles locally
+    // Check if visible to client (Optimization)
+    if (Math.random() < 0.3) {
+      createParticle(p.x, p.y, "#ff4500", 2, 20); // Fire color
     }
+  }
 
   // --- TESLA STORM VISUAL ZONE (ACTIVE SKILL) ---
   // Improved Visibility & Robust Check
@@ -1620,8 +1640,6 @@ const drawPlayer = (ctx, p) => {
 
     ctx.restore();
   }
-
-
 
   // Volumetric Energy Glow (Ready Indicator)
   if ((p.skillCD || 0) <= 0) {
@@ -2392,7 +2410,7 @@ const drawFireTrails = (ctx) => {
     ctx.shadowColor = "#ff4500";
     ctx.strokeStyle = "rgba(255, 69, 0, 0.6)"; // Red-Orange
     ctx.lineWidth = 14;
-    
+
     ctx.beginPath();
     visuals.trail.forEach((pt, i) => {
       const sx = pt.x - cameraX;
@@ -2417,11 +2435,11 @@ const drawFireTrails = (ctx) => {
     ctx.stroke();
 
     ctx.restore();
-    
+
     // Add smoke particles
-     if (Math.random() < 0.1) {
-         createParticle(p.x, p.y, "#555", 1, 30, "smoke");
-     }
+    if (Math.random() < 0.1) {
+      createParticle(p.x, p.y, "#555", 1, 30, "smoke");
+    }
   });
 };
 
@@ -2452,34 +2470,34 @@ const drawVoltTrails = (ctx) => {
     // 3. Segmented Line for Tapering Fade
     // We draw each segment individually to control alpha/width based on age
     visuals.voltTrail.forEach((pt, i) => {
-        if (i === 0) return;
-        const prev = visuals.voltTrail[i - 1];
-        
-        const Age = now - pt.time;
-        const Ratio = 1 - (Age / 3000); // 1.0 (New) -> 0.0 (Old)
-        if (Ratio <= 0) return;
-        
-        ctx.beginPath();
-        const j1 = jitter();
-        const j2 = jitter();
-        
-        ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
-        ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
-        
-        // Dynamic Style
-        ctx.lineWidth = 12 * Ratio; // Taper Width
-        ctx.strokeStyle = `rgba(0, 243, 255, ${0.4 * Ratio})`; // Fade Alpha
-        ctx.shadowBlur = 15 * Ratio;
-        ctx.stroke();
-        
-        // Inner Core (White)
-        ctx.beginPath();
-        ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
-        ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
-        ctx.strokeStyle = `rgba(255, 255, 255, ${Ratio})`;
-        ctx.lineWidth = 4 * Ratio;
-        ctx.shadowBlur = 5 * Ratio;
-        ctx.stroke();
+      if (i === 0) return;
+      const prev = visuals.voltTrail[i - 1];
+
+      const Age = now - pt.time;
+      const Ratio = 1 - Age / 3000; // 1.0 (New) -> 0.0 (Old)
+      if (Ratio <= 0) return;
+
+      ctx.beginPath();
+      const j1 = jitter();
+      const j2 = jitter();
+
+      ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+      ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+
+      // Dynamic Style
+      ctx.lineWidth = 12 * Ratio; // Taper Width
+      ctx.strokeStyle = `rgba(0, 243, 255, ${0.4 * Ratio})`; // Fade Alpha
+      ctx.shadowBlur = 15 * Ratio;
+      ctx.stroke();
+
+      // Inner Core (White)
+      ctx.beginPath();
+      ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+      ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${Ratio})`;
+      ctx.lineWidth = 4 * Ratio;
+      ctx.shadowBlur = 5 * Ratio;
+      ctx.stroke();
     });
 
     ctx.restore();
@@ -2496,16 +2514,16 @@ const loop = (ctx) => {
   if (target) {
     const targetX = target.x - window.innerWidth / 2;
     const targetY = target.y - window.innerHeight / 2;
-    
+
     // FIX: Snap if distance is too large (Teleport/Knockback) to prevent culling visual glitch
     // Goliath Knockback (400) was causing player to fly off-screen while camera lagged
     const dist = Math.hypot(targetX - cameraX, targetY - cameraY);
     if (dist > 300) {
-       cameraX = targetX;
-       cameraY = targetY;
+      cameraX = targetX;
+      cameraY = targetY;
     } else {
-       cameraX += (targetX - cameraX) * 0.1;
-       cameraY += (targetY - cameraY) * 0.1;
+      cameraX += (targetX - cameraX) * 0.1;
+      cameraY += (targetY - cameraY) * 0.1;
     }
   }
 
@@ -2609,50 +2627,50 @@ const loop = (ctx) => {
       drawPlayer(ctx, fakePlayer);
       ctx.restore();
     } else if (ent.type === "TRAIL_SEGMENT") {
-        // Render Volt Trail (Enhanced Visibility)
-        const sx = ent.x - cameraX;
-        const sy = ent.y - cameraY;
-        const ratio = Math.max(0, ent.life / 3000); // 3s max life
-        
-        if (ratio <= 0) return;
+      // Render Volt Trail (Enhanced Visibility)
+      const sx = ent.x - cameraX;
+      const sy = ent.y - cameraY;
+      const ratio = Math.max(0, ent.life / 3000); // 3s max life
 
-        ctx.save();
-        ctx.globalAlpha = ratio * 0.1; // Reduced Visibility (Ribbon is main visual now)
+      if (ratio <= 0) return;
 
-        // Pulse Effect
-        const pulse = 1 + Math.sin(Date.now() / 100) * 0.2;
+      ctx.save();
+      ctx.globalAlpha = ratio * 0.1; // Reduced Visibility (Ribbon is main visual now)
 
-        // Outer Glow (Large \u0026 Soft)
-        ctx.shadowColor = ent.color || "#00f3ff";
-        ctx.shadowBlur = 20 * pulse;
-        
-        ctx.fillStyle = ent.color || "#00f3ff";
-        ctx.beginPath();
-        ctx.arc(sx, sy, (ent.radius || 8) * pulse, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Inner Core (White Hot)
-        ctx.fillStyle = "#ffffff";
-        ctx.shadowBlur = 5;
-        ctx.beginPath();
-        ctx.arc(sx, sy, (ent.radius || 8) * 0.4, 0, Math.PI * 2);
-        ctx.fill();
+      // Pulse Effect
+      const pulse = 1 + Math.sin(Date.now() / 100) * 0.2;
 
-        ctx.restore();
-        
-        // Occasional Spark from trail (Visual Noise)
-        if (Math.random() < 0.05) {
-             particles.push({
-               x: ent.x,
-               y: ent.y,
-               vx: (Math.random() - 0.5) * 20,
-               vy: (Math.random() - 0.5) * 20 + -10, // Upward drift
-               life: 0.4,
-               maxLife: 0.4,
-               color: "#00f3ff",
-               type: "spark"
-           });
-        }
+      // Outer Glow (Large \u0026 Soft)
+      ctx.shadowColor = ent.color || "#00f3ff";
+      ctx.shadowBlur = 20 * pulse;
+
+      ctx.fillStyle = ent.color || "#00f3ff";
+      ctx.beginPath();
+      ctx.arc(sx, sy, (ent.radius || 8) * pulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner Core (White Hot)
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, (ent.radius || 8) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      // Occasional Spark from trail (Visual Noise)
+      if (Math.random() < 0.05) {
+        particles.push({
+          x: ent.x,
+          y: ent.y,
+          vx: (Math.random() - 0.5) * 20,
+          vy: (Math.random() - 0.5) * 20 + -10, // Upward drift
+          life: 0.4,
+          maxLife: 0.4,
+          color: "#00f3ff",
+          type: "spark",
+        });
+      }
     }
   });
 
@@ -2684,12 +2702,8 @@ const loop = (ctx) => {
     }
   });
 
-
-
   // 8. DRAW WALLS (Over Bushes, Occluding them)
   drawWalls(ctx);
-
-
 
   // 8.5. PHASING PLAYERS (Ghost/Spectre Capability)
   // Draw them *over* walls if they are using their ability.
@@ -2743,7 +2757,10 @@ if (canvasRef.value) {
     <canvas ref="canvasRef" class="game-canvas"></canvas>
 
     <!-- QUEUE OVERLAY (Matchmaking) -->
-    <div v-if="inQueue && route.query.mode === 'battle_royale'" class="queue-overlay">
+    <div
+      v-if="inQueue && route.query.mode === 'battle_royale'"
+      class="queue-overlay"
+    >
       <div class="radar-container">
         <div class="radar-sweep"></div>
         <div class="radar-grid"></div>
