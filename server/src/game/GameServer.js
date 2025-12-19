@@ -583,7 +583,7 @@ class GameServer {
           }
         }
 
-        player.update(dt);
+        player.update(dt, false); // No Sprint in Arena
 
         // SUPERNOVA LOGIC (Delayed Explosion)
         if (player.supernovaStartTime) {
@@ -867,7 +867,7 @@ class GameServer {
               // Increased Hitbox (User Request)
               // Apply Damage
               // Increased damage per tick (Buffed 4 -> 12)
-              p.takeDamage(12);
+              p.takeDamage(3);
               // No knockback, just burn.
             }
           }
@@ -892,7 +892,7 @@ class GameServer {
               y: p.y,
               ownerId: id,
               life: 3000, // Duration
-              damage: 12,
+              damage: 3,
               radius: 15, // Larger Visual (User Request)
               color: "#00f3ff", // Electric Blue
             });

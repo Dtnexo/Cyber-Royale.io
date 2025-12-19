@@ -2713,7 +2713,11 @@ const loop = (ctx) => {
   drawFireTrails(ctx);
 
   // 2.6 Volt Trails (Unified Electric Ribbon) - Rendered as Ribbon
-  drawVoltTrails(ctx);
+  // 2.6 Volt Trails (Unified Electric Ribbon) - Rendered as Ribbon
+  // drawVoltTrails(ctx); // REPLACED by Entity-Based Rendering below
+
+  // Group Volt Segments for Lightning Rendering
+  const voltSegments = {};
 
   // 3. Projectiles MOVED AFTER BUSHES for visibility
   // drawProjectiles(ctx); MOVED
@@ -2775,52 +2779,62 @@ const loop = (ctx) => {
       drawPlayer(ctx, fakePlayer);
       ctx.restore();
     } else if (ent.type === "TRAIL_SEGMENT") {
-      // Render Volt Trail (Enhanced Visibility)
-      const sx = ent.x - cameraX;
-      const sy = ent.y - cameraY;
-      const ratio = Math.max(0, ent.life / 3000); // 3s max life
-
-      if (ratio <= 0) return;
-
-      ctx.save();
-      ctx.globalAlpha = ratio * 0.1; // Reduced Visibility (Ribbon is main visual now)
-
-      // Pulse Effect
-      const pulse = 1 + Math.sin(Date.now() / 100) * 0.2;
-
-      // Outer Glow (Large \u0026 Soft)
-      ctx.shadowColor = ent.color || "#00f3ff";
-      ctx.shadowBlur = 20 * pulse;
-
-      ctx.fillStyle = ent.color || "#00f3ff";
-      ctx.beginPath();
-      ctx.arc(sx, sy, (ent.radius || 8) * pulse, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Inner Core (White Hot)
-      ctx.fillStyle = "#ffffff";
-      ctx.shadowBlur = 5;
-      ctx.beginPath();
-      ctx.arc(sx, sy, (ent.radius || 8) * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-
-      // Occasional Spark from trail (Visual Noise)
-      if (Math.random() < 0.05) {
-        particles.push({
-          x: ent.x,
-          y: ent.y,
-          vx: (Math.random() - 0.5) * 20,
-          vy: (Math.random() - 0.5) * 20 + -10, // Upward drift
-          life: 0.4,
-          maxLife: 0.4,
-          color: "#00f3ff",
-          type: "spark",
-        });
-      }
+      // COLLECT FOR LIGHTNING RENDER
+      if (!voltSegments[ent.ownerId]) voltSegments[ent.ownerId] = [];
+      voltSegments[ent.ownerId].push(ent);
     }
   });
+
+  // DRAW VOLT LIGHTNING PATHS
+  for (const [oid, segs] of Object.entries(voltSegments)) {
+    // Sort by Life (High Life = Newest = Closest to Player)
+    segs.sort((a, b) => b.life - a.life);
+
+    if (segs.length < 2) continue;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Jitter function
+    const jitter = () => (Math.random() - 0.5) * 8;
+
+    // Draw Core
+    ctx.beginPath();
+    segs.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      const jx = jitter(); // Constant jitter for frame? No, random is fine for "buzz"
+      const jy = jitter();
+      if (i === 0) ctx.moveTo(sx + jx, sy + jy);
+      else ctx.lineTo(sx + jx, sy + jy);
+    });
+
+    // Style
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#00f3ff";
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+
+    // Draw Outer Glow / Second Bolt
+    ctx.beginPath();
+    segs.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      // Different jitter
+      const jx = jitter() * 1.5;
+      const jy = jitter() * 1.5;
+      if (i === 0) ctx.moveTo(sx + jx, sy + jy);
+      else ctx.lineTo(sx + jx, sy + jy);
+    });
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.6)";
+    ctx.lineWidth = 8; // Thicker glow
+    ctx.shadowBlur = 20;
+    ctx.stroke();
+
+    ctx.restore();
+  }
 
   // 5. Players
   players.forEach((p) => {

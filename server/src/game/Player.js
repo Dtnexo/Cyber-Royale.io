@@ -85,7 +85,7 @@ class Player {
     this.hp += 120; // Heal on pickup
   }
 
-  update(dt) {
+  update(dt, canSprint = false) {
     // Regenerate HP
     this.regenerate(dt);
 
@@ -97,10 +97,17 @@ class Player {
     const now = Date.now();
     const timeSinceLastSprint = now - this.lastSprintTime;
 
-    // Regenerate stamina if not sprinting for 4 seconds
-    if (timeSinceLastSprint > 4000 && this.stamina < this.maxStamina) {
-      this.stamina += 25 * dt; // Regenerate 25 stamina per second
-      if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
+    // STAMINA REGENERATION (Battle Royale Sprint)
+    // Only regen if canSprint is true (meaning we are in BR mode)
+    if (canSprint) {
+      const now = Date.now();
+      const timeSinceLastSprint = now - this.lastSprintTime;
+
+      // Regenerate stamina if not sprinting for 4 seconds
+      if (timeSinceLastSprint > 4000 && this.stamina < this.maxStamina) {
+        this.stamina += 25 * dt; // Regenerate 25 stamina per second
+        if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
+      }
     }
 
     // VOLT: STATIC FIELD DAMAGE
@@ -123,7 +130,8 @@ class Player {
 
     // SPRINT LOGIC (Battle Royale)
     let sprintMultiplier = 1.0;
-    if (this.keys.shift && this.stamina > 0) {
+    // Only allowed if canSprint is passed as TRUE
+    if (canSprint && this.keys.shift && this.stamina > 0) {
       sprintMultiplier = 1.5; // 50% speed boost
       this.stamina -= 20 * dt; // Consume 20 stamina per second
       if (this.stamina < 0) this.stamina = 0;
