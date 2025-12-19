@@ -60,6 +60,19 @@ export const useAuthStore = defineStore("auth", {
         return false;
       }
     },
+    async updateProfile(data) {
+      try {
+        const res = await api.put("/user/update", data);
+        // Merge updates into local user state
+        this.user = { ...this.user, ...res.data.user };
+        return { success: true, message: res.data.message };
+      } catch (err) {
+        return {
+          success: false,
+          message: err.response?.data?.message || "Update failed",
+        };
+      }
+    },
     logout() {
       this.token = null;
       this.user = null;

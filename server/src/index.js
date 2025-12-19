@@ -53,7 +53,7 @@ const seed = require("./scripts/seed");
 const { Hero } = require("./models");
 
 sequelize
-  .sync({ alter: false }) // Disabled 'alter' to prevent "Too many keys" error. Use { force: true } manually if you need to reset the DB.
+  .sync({ alter: true }) // Enabled 'alter' to fix schema mismatch.
   .then(async () => {
     console.log("Database synced");
 

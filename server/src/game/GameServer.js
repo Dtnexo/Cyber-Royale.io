@@ -72,7 +72,10 @@ class GameServer {
               if (p.username === username) {
                 const oldSocket = this.io.sockets.sockets.get(pid);
                 if (oldSocket) {
-                  oldSocket.emit("error_message", "Logged in from another location.");
+                  oldSocket.emit(
+                    "error_message",
+                    "Logged in from another location."
+                  );
                   oldSocket.disconnect(true);
                 }
                 this.players.delete(pid);
@@ -105,6 +108,12 @@ class GameServer {
                   isAllowed = true;
                 }
               }
+            }
+
+            // CRITICAL FIX: If hero ID is invalid/missing, fallback to default immediately
+            if (!hero) {
+               console.warn(`[SERVER] Hero ID ${heroId} not found. Defaulting to free hero.`);
+               hero = await Hero.findOne({ where: { price: 0 } });
             }
 
             if (hero && !isAllowed) {
@@ -259,7 +268,15 @@ class GameServer {
           const result = player.useSkill();
           if (result) {
             const items = Array.isArray(result) ? result : [result];
+
+            // POWER CORE SCALING (Arena)
+            const multiplier = 1 + (player.powerCores || 0) * 0.1;
+
             items.forEach((item) => {
+              if (item.damage) {
+                item.damage = Math.floor(item.damage * multiplier);
+              }
+
               if (item.type === "MINE") {
                 this.entities.push(item);
                 // Mine Lifetime
@@ -277,16 +294,10 @@ class GameServer {
               } else if (
                 item.type === "PROJECTILE" ||
                 item.type === "LAVA_WAVE" ||
-                item.type === "MARKER_SHOT" ||
-                item.type === "BLACK_HOLE_SHOT"
+                item.type === "BLACK_HOLE_SHOT" ||
+                item.type === "SNIPER_SHOT"
               ) {
                 this.projectiles.push(item);
-              } else if (item.type === "HEALING_STATION") {
-                this.entities.push(item);
-                setTimeout(() => {
-                  const idx = this.entities.indexOf(item);
-                  if (idx > -1) this.entities.splice(idx, 1);
-                }, item.life);
               } else if (item.type === "DECOY") {
                 this.entities.push(item);
                 setTimeout(() => {
@@ -294,11 +305,11 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE" || item.type === "GRAVITY_SLAM") {
+              } else if (item.type === "SHOCKWAVE" || item.type === "SEISMIC_SLAM" || item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
-                  if (p.isDead) continue;
+                  if (p.isDead || p.isPhasing) continue; // Phasing Immunity
 
                   const dx = p.x - item.x;
                   const dy = p.y - item.y;
@@ -313,9 +324,45 @@ class GameServer {
                     let nx = p.x + Math.cos(angle) * force;
                     let ny = p.y + Math.sin(angle) * force;
 
+                    // COLLISION FIX: Raycast/Step check to prevent going through walls
+                    const steps = 20; // Check every 20px (400 / 20 = 20px)
+                    let finalX = p.x;
+                    let finalY = p.y;
+                    const stepX = (nx - p.x) / steps;
+                    const stepY = (ny - p.y) / steps;
+
+                    for(let i=1; i<=steps; i++) {
+                        const testX = p.x + stepX * i;
+                        const testY = p.y + stepY * i;
+
+                        // 1. Check Map Bounds
+                        if (testX < 0 || testX > 1600 || testY < 0 || testY > 1200) {
+                             break; // Stop at previous valid
+                        }
+
+                        // 2. Check Obstacles
+                        let collision = false;
+                        if (MapData && MapData.obstacles) {
+                            for (const obs of MapData.obstacles) {
+                                // Simple AABB Point Check (Player is small enough to treat as point for wall stop)
+                                // Add slight buffer (radius 15) for robustness
+                                if (testX > obs.x - 15 && testX < obs.x + obs.w + 15 &&
+                                    testY > obs.y - 15 && testY < obs.y + obs.h + 15) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (collision) break; // Hit wall, stop
+
+                        finalX = testX;
+                        finalY = testY;
+                    }
+
                     // Update Position
-                    p.x = Math.max(0, Math.min(1600, nx));
-                    p.y = Math.max(0, Math.min(1200, ny));
+                    p.x = finalX;
+                    p.y = finalY;
 
                     // Apply Damage
                     p.takeDamage(item.damage);
@@ -340,7 +387,7 @@ class GameServer {
                 }
                 // Emulate Visual Explosion
                 this.io.emit("visual_effect", {
-                  type: "shockwave",
+                  type: (item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") ? item.type : "shockwave",
                   x: item.x,
                   y: item.y,
                   radius: item.radius,
@@ -461,13 +508,23 @@ class GameServer {
 
       // 1. Update Players & Handle Shooting
       this.players.forEach((player) => {
+        // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "New Heroes invisible on kill")
+        if (player.hero.name !== "Mirage" && player.hero.name !== "Shadow") {
+          player.invisible = false;
+        }
+        // SAFEGUARD: NaN HP check
+        if (isNaN(player.hp)) player.hp = player.maxHp;
+
         // Respawn Logic
         if (player.isDead) {
           if (Date.now() > player.respawnTime) {
             // Respawn Now - Restore Stats
             player.isDead = false;
             player.hp = player.maxHp;
-            // Coordinates already set at death time
+            // Reset Position (Fixes "Respawn where died" bug)
+            const spawn = this.getSafeSpawn();
+            player.x = spawn.x;
+            player.y = spawn.y;
             player.cooldowns.skill = 0;
             player.cooldowns.shoot = 0;
             player.freezeEndTime = 0;
@@ -499,6 +556,9 @@ class GameServer {
               username: player.username,
               maxSkillCD: player.hero.stats.cooldown,
               kills: player.kills,
+              teleportMarker: player.teleportMarker
+                ? { x: player.teleportMarker.x, y: player.teleportMarker.y }
+                : null,
             });
             return;
           }
@@ -537,7 +597,7 @@ class GameServer {
             // Damage & Knockback
             for (const [pid, target] of this.players) {
               if (pid === player.id) continue;
-              if (target.isDead) continue;
+              if (target.isDead || target.isPhasing) continue; // Phasing Immunity
 
               const dx = target.x - player.x;
               const dy = target.y - player.y;
@@ -573,38 +633,49 @@ class GameServer {
                 // Safe Push Logic (Raycast against Obstacles)
                 const angle = Math.atan2(dy, dx);
                 const maxForce = 1000 * (1 - dist / blastRadius) + 200;
-                const steps = 8;
+                // FIX: Increase steps to prevent tunneling (1200px force needs small steps)
+                const steps = 40; // ~30px per step
                 const stepDist = maxForce / steps;
-                
+
                 let safeX = target.x;
                 let safeY = target.y;
                 const cos = Math.cos(angle);
                 const sin = Math.sin(angle);
-                
+
                 const obstacles = MapData.obstacles || [];
 
                 for (let s = 1; s <= steps; s++) {
-                    const checkX = target.x + cos * (stepDist * s);
-                    const checkY = target.y + sin * (stepDist * s);
-                    let hitsWall = false;
-                    
-                    // Map Bounds
-                    if (checkX < 50 || checkX > MapData.width - 50 || checkY < 50 || checkY > MapData.height - 50) hitsWall = true;
-                    
-                    // Obstacles
-                    if (!hitsWall) {
-                        for (const obs of obstacles) {
-                            if (checkX > obs.x && checkX < obs.x + obs.w &&
-                                checkY > obs.y && checkY < obs.y + obs.h) {
-                                hitsWall = true;
-                                break;
-                            }
-                        }
+                  const checkX = target.x + cos * (stepDist * s);
+                  const checkY = target.y + sin * (stepDist * s);
+                  let hitsWall = false;
+
+                  // Map Bounds
+                  if (
+                    checkX < 50 ||
+                    checkX > MapData.width - 50 ||
+                    checkY < 50 ||
+                    checkY > MapData.height - 50
+                  )
+                    hitsWall = true;
+
+                  // Obstacles
+                  if (!hitsWall) {
+                    for (const obs of obstacles) {
+                      if (
+                        checkX > obs.x &&
+                        checkX < obs.x + obs.w &&
+                        checkY > obs.y &&
+                        checkY < obs.y + obs.h
+                      ) {
+                        hitsWall = true;
+                        break;
+                      }
                     }
-                    
-                    if (hitsWall) break;
-                    safeX = checkX;
-                    safeY = checkY;
+                  }
+
+                  if (hitsWall) break;
+                  safeX = checkX;
+                  safeY = checkY;
                 }
                 target.x = safeX;
                 target.y = safeY;
@@ -614,8 +685,68 @@ class GameServer {
                   const killer = this.players.get(player.id);
                   if (killer) killer.kills++;
                   target.isDead = true;
+
+                  // Set Killer Info for "You Died" Screen
+                  target.killedBy = player.username;
+                  target.killedByHero = player.hero.name;
+
                   target.respawnTime = Date.now() + 5000;
-                  this.io.emit("player_died", { id: pid, killerId: player.id });
+                  this.io.emit("player_died", {
+                    id: pid,
+                    killerId: player.id,
+                    killerName: player.username,
+                    name: target.username, // Added for Kill Feed
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // STORM HERO LOGIC (Tesla Coil)
+        // Same logic as BattleRoyaleManager, ported to Arena
+        if (player.stormActive) {
+          if (!player.lastStormZap) player.lastStormZap = 0;
+          const now = Date.now();
+          if (now - player.lastStormZap >= 100) {
+            // Fast Tick (0.1s)
+            player.lastStormZap = now;
+
+            // Find ALL enemies in range
+            const targets = [];
+            const range = 300;
+
+            for (const [tid, target] of this.players) {
+              if (tid === player.id || target.isDead || target.isPhasing) continue; // Phasing Immunity
+
+              const dist = Math.hypot(target.x - player.x, target.y - player.y);
+              if (dist < range) {
+                targets.push(target);
+              }
+            }
+
+            // CHAOTIC STORM: Chance to zap each target independently
+            if (targets.length > 0) {
+              for (const target of targets) {
+                // 35% chance per 0.1s ~ 3.5 hits/sec * 35 dmg = ~122 DPS (Stochastic)
+                if (Math.random() < 0.35) {
+                  const multiplier = 1 + (player.powerCores || 0) * 0.1;
+                  const damage = 35 * multiplier;
+                  target.takeDamage(damage);
+
+                  // Visual
+                  this.io.to("game_room").emit("visual_effect", {
+                    type: "lightning_zap",
+                    x1: player.x,
+                    y1: player.y,
+                    x2: target.x,
+                    y2: target.y,
+                    color: "#00F3FF",
+                  });
+
+                  if (target.hp <= 0 && !target.isDead) {
+                    this.handlePlayerDeath(target, player.id);
+                  }
                 }
               }
             }
@@ -657,10 +788,15 @@ class GameServer {
           freezeEndTime: player.freezeEndTime || 0,
           isPoisoned: player.isPoisoned, // SEND TO CLIENT
           isMarked: player.isMarked,
+          staticFieldActive: player.staticFieldActive, // FOR VOLT ANIMATION
+          hasFireTrail: player.hasFireTrail, // BLAZE ANIMATION
           skillCD: player.cooldowns.skill,
           username: player.username,
           maxSkillCD: player.hero.stats.cooldown,
           kills: player.kills,
+          teleportMarker: player.teleportMarker
+            ? { x: player.teleportMarker.x, y: player.teleportMarker.y }
+            : null,
         });
       });
 
@@ -690,93 +826,89 @@ class GameServer {
               break;
             }
           }
-        } else if (ent.type === "HEALING_STATION") {
-          // Heal nearby allies
-          for (const [pid, p] of this.players) {
-            if (p.isDead) continue;
-            // Allow self-heal and team heal logic (For now, heal everyone or just self? Let's say Friendly Fire is OFF, so heal Self + maybe concept of teams later?
-            // For FFA, heal ONLY owner? Or heal anyone nearby?
-            // Usually Support heals allies. In FFA, maybe it heals anyone?
-            // Let's make it heal OWNER and anyone else (Risky in FFA).
-            // Safe bet: Heal Owner, and maybe allies if we had teams.
-            // Re-reading request: "Support". implies helping others.
-            // Let's heal everyone nearby for chaos/fun or just owner.
-            // Code: Heal nearby players.
-            const dx = ent.x - p.x;
-            const dy = ent.y - p.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < ent.radius) {
-              if (p.hp < p.maxHp) {
-                p.hp = Math.min(p.maxHp, p.hp + ent.healRate * dt);
-              }
-            }
+        } else if (ent.type === "DECOY") {
+          // Decoy logic if needed
+        } else if (ent.type === "TRAIL_SEGMENT") {
+             // Lifetime
+             ent.life -= 30; // 30ms tick
+             if (ent.life <= 0) {
+                 this.entities.splice(i, 1);
+                 continue;
+             }
+             
+             // Damage Players
+             for (const [pid, p] of this.players) {
+                 if (pid === ent.ownerId) continue;
+                 if (p.isDead || p.isPhasing) continue; // Phasing immune
+                 if (p.invincible) continue;
+                 
+                 const dist = Math.hypot(p.x - ent.x, p.y - ent.y);
+                 if (dist < 25) { // Increased Hitbox (User Request)
+                     // Apply Damage
+                     // Increased damage per tick (Buffed 4 -> 12)
+                     p.takeDamage(12); 
+                     // No knockback, just burn.
+                 }
+             }
+        }
+      }
+
+      // 0. Update Players & Handle Generic Dot/Aura effects
+      for (const [id, p] of this.players) {
+        if (p.staticFieldActive) {
+          
+          // NEW VOLT LOGIC: Spawning Trail Segments (Server Side)
+          // We need to track lastTrailPos on player object.
+          // Check distance
+          const lx = p.lastTrailX || p.x;
+          const ly = p.lastTrailY || p.y;
+          const dist = Math.hypot(p.x - lx, p.y - ly);
+          
+          if (dist > 10) { // Spawn every 10px (Dense line)
+              this.entities.push({
+                  type: "TRAIL_SEGMENT",
+                  x: p.x,
+                  y: p.y,
+                  ownerId: id,
+                  life: 3000, // Duration
+                  damage: 12,
+                  radius: 15, // Larger Visual (User Request)
+                  color: "#00f3ff" // Electric Blue
+              });
+              p.lastTrailX = p.x;
+              p.lastTrailY = p.y;
           }
         }
       }
 
-      // 2. Update Projectiles
+      // 1. Move Projectiles
       for (let i = this.projectiles.length - 1; i >= 0; i--) {
         const p = this.projectiles[i];
 
         // BLACK HOLE SHOT REMOVED (Replaced by Supernova)
 
         // Standard Projectile Physics
+        const prevX = p.x;
+        const prevY = p.y; // Store previous position for Raycast Collision
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt * 1000;
 
-        // BOOMERANG LOGIC (Aegis)
-        if (p.type === "BOOMERANG") {
-          const owner = this.players.get(p.ownerId);
-          if (owner) {
-            const dx = p.x - owner.x;
-            const dy = p.y - owner.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-
-            if (!p.returning) {
-              if (dist > (p.maxDist || 400)) {
-                p.returning = true;
-                // Reset hit list to allow hitting enemies again on way back
-                p.hitTargets = [];
-              }
-            } else {
-              // Homing Return
-              const angle = Math.atan2(owner.y - p.y, owner.x - p.x);
-              const returnSpeed = 1200;
-              p.vx = Math.cos(angle) * returnSpeed;
-              p.vy = Math.sin(angle) * returnSpeed;
-
-              if (dist < 30) {
-                this.projectiles.splice(i, 1);
-                continue; // Caught
-              }
-            }
-          }
-
-          // BLOCK BULLETS (Destroy enemy projectiles)
-          for (const other of this.projectiles) {
-            if (other === p) continue;
-            if (other.ownerId === p.ownerId) continue; // Don't block ally shots
-            if (other.type === "BOOMERANG") continue; // Don't block other boomerangs?
-
-            const pdx = p.x - other.x;
-            const pdy = p.y - other.y;
-            const pDist = Math.sqrt(pdx * pdx + pdy * pdy);
-
-            if (pDist < p.radius + 15) { // Radius check
-              other.life = -1; // Destroy enemy bullet
-              // Visual Effect?
-              this.io.emit("visual_effect", {
-                type: "hit",
-                x: other.x,
-                y: other.y,
-                color: "#ffd700"
-              });
-            }
-          }
+        // DECOY COLLISION (User Request)
+        for (let j = this.entities.length - 1; j >= 0; j--) {
+           const ent = this.entities[j];
+           if (ent.type === "DECOY" && ent.ownerId !== p.ownerId) {
+             if (Math.hypot(p.x - ent.x, p.y - ent.y) < 30) {
+                 ent.hp -= p.damage;
+                 p.life = 0; // Destroy projectile
+                 this.io.emit("visual_effect", { type: "hit", x: p.x, y: p.y, color: "#fff" });
+                 if (ent.hp <= 0) {
+                     this.entities.splice(j, 1);
+                 }
+                 break;
+             }
+           }
         }
-
-        // FRICTION LOGIC (Techno Mines)
 
         // FRICTION LOGIC (Techno Mines)
         if (p.friction) {
@@ -833,15 +965,21 @@ class GameServer {
               ) {
                 // LOGICAL BOUNCE (AABB Reflection)
                 const pRadius = 5;
-                const ox = (obs.w / 2 + pRadius) - Math.abs((pRect.x + 5) - (obs.x + obs.w / 2));
-                const oy = (obs.h / 2 + pRadius) - Math.abs((pRect.y + 5) - (obs.y + obs.h / 2));
+                const ox =
+                  obs.w / 2 +
+                  pRadius -
+                  Math.abs(pRect.x + 5 - (obs.x + obs.w / 2));
+                const oy =
+                  obs.h / 2 +
+                  pRadius -
+                  Math.abs(pRect.y + 5 - (obs.y + obs.h / 2));
 
                 if (ox < oy) {
-                   p.vx = -p.vx * 0.7; // Bounce X
-                   p.x += (pRect.x + 5 < obs.x + obs.w / 2) ? -ox : ox;
+                  p.vx = -p.vx * 0.7; // Bounce X
+                  p.x += pRect.x + 5 < obs.x + obs.w / 2 ? -ox : ox;
                 } else {
-                   p.vy = -p.vy * 0.7; // Bounce Y
-                   p.y += (pRect.y + 5 < obs.y + obs.h / 2) ? -oy : oy;
+                  p.vy = -p.vy * 0.7; // Bounce Y
+                  p.y += pRect.y + 5 < obs.y + obs.h / 2 ? -oy : oy;
                 }
 
                 hitWall = false; // Don't destroy
@@ -929,13 +1067,42 @@ class GameServer {
         for (const [id, player] of this.players) {
           if (p.ownerId === id) continue; // Don't hit self
           if (player.isDead) continue; // Ghost Mode: Bullets pass through dead players
+          if (player.isPhasing) continue; // GHOST/SPECTRE PHASING: Bullets pass through
 
-          // Simple Circle Collision
-          const dx = p.x - player.x;
-          const dy = p.y - player.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+          // Raycast Collision (Segment vs Circle)
+          // Fixes Tunneling for high-speed projectiles (Sniper)
+          const ax = prevX !== undefined ? prevX : p.x;
+          const ay = prevY !== undefined ? prevY : p.y;
+          const bx = p.x;
+          const by = p.y;
+          const cx = player.x;
+          const cy = player.y;
+          const r = 30; // Hitbox radius (Liberal 30px)
 
-          if (dist < 25) {
+          // Vector AB
+          const labX = bx - ax;
+          const labY = by - ay;
+          // Vector AC
+          const lacX = cx - ax;
+          const lacY = cy - ay;
+
+          // Project C onto Line AB (clamp t 0..1)
+          const lenSq = labX * labX + labY * labY;
+          let t = 0;
+          if (lenSq > 0) {
+            t = (lacX * labX + lacY * labY) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+          }
+
+          // Closest point on segment
+          const closetX = ax + t * labX;
+          const closetY = ay + t * labY;
+
+          const dx = cx - closetX;
+          const dy = cy - closetY;
+          const distSq = dx * dx + dy * dy;
+
+          if (distSq < r * r) {
             // Collision
             // Check Shield
             if (player.shieldActive) {
@@ -959,21 +1126,6 @@ class GameServer {
               damage += (attacker.powerCores || 0) * 9;
             }
 
-            // MARKER DAMAGE AMPLIFICATION
-            if (player.isMarked) {
-              damage *= 1.5;
-            }
-
-            // APPLY MARK
-            if (p.effect === "MARK") {
-              player.isMarked = true;
-              // Refresh mark timer
-              if (player.markTimeout) clearTimeout(player.markTimeout);
-              player.markTimeout = setTimeout(() => {
-                player.isMarked = false;
-              }, 5000); // 5 Seconds Mark
-            }
-
             // HIT EFFECT
             this.io.emit("visual_effect", {
               type: "hit",
@@ -990,43 +1142,8 @@ class GameServer {
               damage = damage * (1 + distFactor * 0.5);
             }
 
-            // BOOMERANG LOGIC (Aegis)
-            if (p.type === "BOOMERANG") {
-              // Init Hit List
-              if (!p.hitTargets) p.hitTargets = [];
-
-              // Check if already hit this pass
-              if (p.hitTargets.includes(id)) {
-                // Already hit this player, ignore damage
-                continue;
-              }
-
-              // Register Hit
-              p.hitTargets.push(id);
-
-              // Apply SLOW (80% Slow for 2s? Or less?)
-              // User said "rallenti". Let's do 50% slow.
-              player.speed = player.baseSpeed * 0.5;
-              player.isSlowed = true; // Use existing flag if any
-              if (player.slowTimeout) clearTimeout(player.slowTimeout);
-              player.slowTimeout = setTimeout(() => {
-                player.speed = player.baseSpeed;
-                player.isSlowed = false;
-              }, 2000);
-
-              // Apply Damage
-              player.hp -= damage;
-
-              // Check Death
-              if (player.hp <= 0) this.handlePlayerDeath(player, p.ownerId);
-
-              // DO NOT SPLICE (Penetrate)
-              // DO NOT BREAK (Continue checking other players if overlapped)
-              continue;
-            }
-
             // FREEZE EFFECT
-            if (p.effect === "FREEZE") {
+            if (p.effect === "FREEZE" && !player.isUnstoppable) {
               player.isFrozen = true;
               player.speed = 0;
               player.freezeEndTime = Date.now() + 2000;
@@ -1040,7 +1157,9 @@ class GameServer {
             // POISON EFFECT (VIPER)
             if (p.isPoison) {
               damage += 25;
-              player.speed = player.baseSpeed * 0.4;
+              if (!player.isUnstoppable) {
+                 player.speed = player.baseSpeed * 0.4;
+              }
               player.isPoisoned = true;
 
               if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
@@ -1059,7 +1178,29 @@ class GameServer {
               });
             }
 
+            // REFLECT DAMAGE (Citadel)
+            if (player.reflectDamage && attacker && attacker.id !== player.id) {
+               const reflectDmg = Math.floor(damage * 0.5); // Reflect 50%
+               attacker.takeDamage(reflectDmg);
+               this.io.emit("visual_effect", {
+                  type: "reflect",
+                  targetId: attacker.id,
+                  x: attacker.x,
+                  y: attacker.y
+               });
+               // Prevent full damage to Citadel? 
+               // User asked for "Meilleur", let's say he takes half damage too?
+               damage = Math.floor(damage * 0.5); 
+            }
+
             player.takeDamage(damage);
+
+             // LIFESTEAL (Brawler)
+             if (attacker && attacker.lifestealActive && !attacker.isDead) {
+                const heal = Math.floor(damage * 0.5); // Heal 50% of damage dealt
+                attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+                // Visual cleanup? Handled by HUD update
+             }
             this.projectiles.splice(i, 1);
 
             // Handle Death
@@ -1080,7 +1221,7 @@ class GameServer {
           // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
           // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
           if (ent.ownerId === id) continue;
-          if (player.isDead) continue; // Ghost Mode
+          if (player.isDead || player.isPhasing) continue; // Phasing Immunity
 
           const dx = ent.x - player.x;
           const dy = ent.y - player.y;
@@ -1132,6 +1273,7 @@ class GameServer {
       }
 
       // Emit to room
+      state.entities = this.entities; // CRITICAL FIX: Send entities (decoy, trail) to client
       this.io.to("game_room").emit("server_update", state);
     }, 30);
   }
