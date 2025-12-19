@@ -341,6 +341,10 @@ onMounted(async () => {
     if (chatMessages.value.length > 50) chatMessages.value.shift();
   });
 
+  socket.value.on("chat_history", (history) => {
+    chatMessages.value = history;
+  });
+
   socket.value.on("br_start", (data) => {
     inQueue.value = false; // Game Start
     mapData = data.map;
@@ -676,6 +680,9 @@ const handleKey = (e) => {
   }
   if (e.code === "Space") {
     keys.space = e.type === "keydown";
+  }
+  if (e.key === "Shift") {
+    keys.shift = e.type === "keydown";
   }
 };
 
@@ -1901,127 +1908,9 @@ const drawPlayer = (ctx, p) => {
   // Use Class to determine shape if specific hero not defined
   // heroClass already defined above for Aura logic
 
-  if (heroClass === "Tank") {
-    // TANK (Hexagon)
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    // Start at Top (-25, 0) logic
-    for (let i = 0; i < 6; i++) {
-      // Offset angle by -PI/2 to start at Top
-      const angle = (i * Math.PI) / 3 - Math.PI / 2;
-      ctx.lineTo(25 * Math.cos(angle), 25 * Math.sin(angle));
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.stroke();
-    // Shield
-    // Shield
-    if (p.shield) {
-      // CITADEL: 360 Shield if Invincible/Citadel
-      if (p.hero === "Citadel" || heroName === "Citadel") {
-        ctx.beginPath();
-        ctx.arc(0, 0, 45, 0, Math.PI * 2); // Full Circle
-        ctx.strokeStyle = "#00ffff";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        // Force Field Effect
-        ctx.fillStyle = "rgba(0, 255, 255, 0.2)";
-        ctx.fill();
-      } else {
-        // Standard Tank Shield (Frontal)
-        ctx.beginPath();
-        // Arc centered at Top (-PI/2)
-        ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
-        ctx.strokeStyle = "#00ffff";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-      }
-    }
-  } else if (p.isFrozen) {
-    // IMPROVED FREEZE VISUAL (Ice Crystal Overlay)
-    // Procedural jagged shape
-    ctx.save();
-    ctx.beginPath();
-    const spikes = 8;
-    const outerRadius = 45;
-    const innerRadius = 25;
-
-    // Shivering effect
-    const shiverX = (Math.random() - 0.5) * 3;
-    const shiverY = (Math.random() - 0.5) * 3;
-    ctx.translate(shiverX, shiverY);
-
-    for (let i = 0; i < spikes; i++) {
-      const step = Math.PI / spikes;
-      const rot = (Math.PI / 2) * 3;
-      let x = 0;
-      let y = 0;
-
-      let ang = i * step * 2 + rot;
-      x = Math.cos(ang) * outerRadius;
-      y = Math.sin(ang) * outerRadius;
-      ctx.lineTo(x, y);
-
-      ang = i * step * 2 + step + rot;
-      x = Math.cos(ang) * innerRadius;
-      y = Math.sin(ang) * innerRadius;
-      ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-
-    ctx.fillStyle = "rgba(0, 243, 255, 0.6)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  } else if (heroClass === "Speed") {
-    // SPEED (Arrow/Dart) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    ctx.moveTo(0, -30); // Tip Top
-    ctx.lineTo(20, 20); // Bottom Right
-    ctx.lineTo(0, 10); // Center indent
-    ctx.lineTo(-20, 20); // Bottom Left
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.stroke();
-  } else if (heroClass === "Support") {
-    // SUPPORT (Box/Medical) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.fillRect(-20, -20, 40, 40); // Base Box
-    ctx.fillStyle = "#fff";
-
-    // Cross / Gun pointing UP
-    // Vertical bar sticking out top
-    ctx.fillRect(-5, -30, 10, 30);
-    // Horizontal Cross bar
-    ctx.fillRect(-15, -20, 30, 10);
-
-    ctx.strokeStyle = "#fff"; // Changed from #000 to #fff for consistency
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.strokeRect(-15, -15, 30, 30); // Inner Detail
-  } else {
-    // DAMAGE / DEFAULT (Triangle) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    ctx.moveTo(0, -30); // Tip Top
-    ctx.lineTo(20, 20);
-    ctx.lineTo(-20, 20);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 3;
-    ctx.lineJoin = "round";
-    ctx.stroke();
-  }
+  // --- HERO VISUALS ---
+  // Replaced with reusable function
+  drawHeroBody(ctx, p, primaryColor);
 
   // ctx.stroke(); // REMOVED: Caused ghosting for Support class (re-stroked previous paths)
 
@@ -2108,26 +1997,6 @@ const drawPlayer = (ctx, p) => {
     ctx.stroke();
     ctx.shadowBlur = 0; // Reset
     ctx.setLineDash([]); // Reset Explicitly
-  }
-
-  // FROST EFFECT (Frozen Enemy)
-  if (p.isFrozen || p.isRooted) {
-    // Check property name from server (likely isRooted or custom speed check)
-    ctx.save();
-    ctx.fillStyle = "rgba(0, 255, 255, 0.4)";
-    ctx.strokeStyle = "#00ffff";
-    ctx.lineWidth = 2;
-    // Draw Ice Cube around player
-    ctx.fillRect(-25, -25, 50, 50);
-    ctx.strokeRect(-25, -25, 50, 50);
-
-    // Crack details
-    ctx.beginPath();
-    ctx.moveTo(-15, -15);
-    ctx.lineTo(0, 0);
-    ctx.lineTo(15, -5);
-    ctx.stroke();
-    ctx.restore();
   }
 
   // GENERIC AIM CURSOR (Only Local Player)
@@ -2600,11 +2469,178 @@ const drawFireTrails = (ctx) => {
 
     ctx.restore();
 
+    // Spawn Ghosts (Sprint)
+    if (
+      p.id === myId &&
+      keys.shift &&
+      (Math.abs(p.vx) > 1 || Math.abs(p.vy) > 1)
+    ) {
+      // Limit ghost spawn rate (e.g. every 3rd frame)
+      if (!p.ghostTimer) p.ghostTimer = 0;
+      p.ghostTimer++;
+      if (p.ghostTimer % 3 === 0) {
+        if (!ghosts.value) ghosts.value = [];
+        ghosts.value.push({
+          x: p.x,
+          y: p.y,
+          angle: p.angle,
+          heroClass: p.heroClass,
+          hero: p.hero,
+          color: p.color,
+          alpha: 0.4,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
     // Add smoke particles
     if (Math.random() < 0.1) {
       createParticle(p.x, p.y, "#555", 1, 30, "smoke");
     }
   });
+};
+
+// --- GHOST TRAIL (Sprint) ---
+const ghosts = ref([]);
+
+const drawHeroBody = (ctx, p, color, alpha = 1) => {
+  // Reusable Hero Shape Drawer
+  const heroClass = p.heroClass || "Damage";
+  const heroName = typeof p.hero === "object" ? p.hero.name : p.hero;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  if (heroClass === "Tank") {
+    // TANK (Hexagon)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i * Math.PI) / 3 - Math.PI / 2;
+      ctx.lineTo(25 * Math.cos(angle), 25 * Math.sin(angle));
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    // Shield (Only draw for real player, not ghosts usually, but let's keep it for cool factor)
+    if (p.shield) {
+      if (heroName === "Citadel") {
+        ctx.beginPath();
+        ctx.arc(0, 0, 45, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.fillStyle = `rgba(0, 255, 255, ${0.2 * alpha})`;
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
+        ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
+    }
+  } else if (p.isFrozen || p.isRooted) {
+    // FROZEN (Ice Crystal)
+    ctx.beginPath();
+    const spikes = 8;
+    const outerRadius = 45;
+    const innerRadius = 25;
+    // Shivering effect
+    const shiverX = (Math.random() - 0.5) * 3;
+    const shiverY = (Math.random() - 0.5) * 3;
+    ctx.translate(shiverX, shiverY);
+
+    for (let i = 0; i < spikes; i++) {
+      const step = Math.PI / spikes;
+      const rot = (Math.PI / 2) * 3;
+      let ang = i * step * 2 + rot;
+      ctx.lineTo(Math.cos(ang) * outerRadius, Math.sin(ang) * outerRadius);
+      ang = i * step * 2 + step + rot;
+      ctx.lineTo(Math.cos(ang) * innerRadius, Math.sin(ang) * innerRadius);
+    }
+    ctx.closePath();
+    ctx.fillStyle = `rgba(0, 243, 255, ${0.6 * alpha})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 * alpha})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else if (heroClass === "Speed") {
+    // SPEED (Arrow)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, -30);
+    ctx.lineTo(20, 20);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-20, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  } else if (heroClass === "Support") {
+    // SUPPORT (Box)
+    ctx.fillStyle = color;
+    ctx.fillRect(-20, -20, 40, 40);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillRect(-5, -30, 10, 30);
+    ctx.fillRect(-15, -20, 30, 10);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.strokeRect(-15, -15, 30, 30);
+  } else {
+    // DAMAGE (Triangle)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, -30);
+    ctx.lineTo(20, 20);
+    ctx.lineTo(-20, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
+const drawGhostTrails = (ctx) => {
+  if (!ghosts.value) return;
+
+  for (let i = ghosts.value.length - 1; i >= 0; i--) {
+    const g = ghosts.value[i];
+    g.alpha -= 0.05; // Fade out
+
+    if (g.alpha <= 0) {
+      ghosts.value.splice(i, 1);
+      continue;
+    }
+
+    const screenX = g.x - cameraX;
+    const screenY = g.y - cameraY;
+
+    ctx.save();
+    ctx.translate(screenX, screenY);
+    ctx.rotate(g.angle); // Rotate match player
+
+    // Mock player object for drawHeroBody
+    const pMock = {
+      heroClass: g.heroClass,
+      hero: g.hero,
+      shield: false, // No shield on ghosts for cleaner look
+    };
+
+    drawHeroBody(ctx, pMock, g.color, g.alpha);
+
+    ctx.restore();
+  }
 };
 
 const drawVoltTrails = (ctx) => {
@@ -2899,6 +2935,7 @@ const loop = (ctx) => {
 
   // 8. PARTICLES & VFX (Over Everything usually)
   drawMarkers(ctx); // GHOST TELEPORT MARKERS
+  drawGhostTrails(ctx); // NEW GHOST TRAILS
   drawParticles(ctx);
   drawShockwaves(ctx);
   drawSupernovas(ctx); // NEW SUPERNOVA LAYER

@@ -18,6 +18,7 @@ class BattleRoyaleManager {
     this.QUEUE_TIMEOUT = 60000;
     this.queueTimer = null;
     this.startTime = 0;
+    this.chatHistory = []; // { username, message, skinColor, timestamp }
   }
 
   joinQueue(socket, playerData) {
@@ -51,25 +52,64 @@ class BattleRoyaleManager {
     this.queue.push({ socket, playerData });
     socket.join("br_lobby");
 
+    // Send Chat History
+    socket.emit("chat_history", this.chatHistory);
+
     // Secure Matchmaking Chat
     socket.on("chat_message", (msg) => {
       if (!msg || typeof msg !== "string" || msg.length > 200) return; // Basic validation
 
+      // PROFANITY FILTER (Basic)
+      const badWords = [
+        "salope",
+        "connard",
+        "putain",
+        "merde",
+        "fuck",
+        "shit",
+        "pute",
+        "enculé",
+        "bitch",
+        "asshole",
+      ];
+      let filteredMsg = msg;
+
+      const isProfane = badWords.some((word) =>
+        msg.toLowerCase().includes(word)
+      );
+      if (isProfane) {
+        // Replace entire message or specific words? User asked "tu mette sa * pour toute les lettres" if they put "des mots".
+        // Implies masking the *word* or the *message*? "pour toute les lettres" sounds like masking the bad words completely or the whole sentence.
+        // Let's mask the Bad Words specifically to be nicer, or just mask the whole thing if it's toxic.
+        // "si il mette des mots ... tu mette sa * pour toute les lettres" -> maybe "replace the letters with *".
+        // Let's replace bad occurrences.
+        badWords.forEach((word) => {
+          const regex = new RegExp(word, "gi");
+          filteredMsg = filteredMsg.replace(regex, "*".repeat(word.length));
+        });
+      }
+
       // Anti-Injection (Sanitization)
-      const safeMsg = msg
+      const safeMsg = filteredMsg
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 
-      // Broadcast to Lobby
-      this.io.to("br_lobby").emit("chat_update", {
+      const chatObj = {
         username: playerData.username,
         message: safeMsg,
         skinColor: playerData.skinColor || "#00f3ff",
         timestamp: Date.now(),
-      });
+      };
+
+      // Store History (Max 50)
+      this.chatHistory.push(chatObj);
+      if (this.chatHistory.length > 50) this.chatHistory.shift();
+
+      // Broadcast to Lobby
+      this.io.to("br_lobby").emit("chat_update", chatObj);
     });
 
     this.io.to("br_lobby").emit("queue_update", {
@@ -472,6 +512,49 @@ class BattleRoyaleManager {
         }
       }
     });
+
+    // REFACTORED TRAIL LOGIC (Fix Stacking Damage)
+    // 1. Manage Trail Lifetimes first
+    for (let i = this.entities.length - 1; i >= 0; i--) {
+      const ent = this.entities[i];
+      if (ent.type === "TRAIL_SEGMENT") {
+        ent.life -= 30; // 30ms tick
+        if (ent.life <= 0) {
+          this.entities.splice(i, 1);
+        }
+      }
+    }
+
+    // 2. Apply Damage (Player vs Any Trail)
+    // We iterate players and check if they are touching ANY enemy trail.
+    // If yes, take damage ONCE per tick.
+    for (const [pid, p] of this.players) {
+      if (!p.alive || p.invincible || p.isPhasing) continue;
+
+      let touchingLava = false;
+      let diffOwner = null;
+
+      // Check against all trail segments
+      // Optimization: spatial hash would be better, but O(N*M) is fine for low count
+      for (const ent of this.entities) {
+        if (ent.type !== "TRAIL_SEGMENT") continue;
+        if (ent.ownerId === pid) continue; // Don't hurt self
+
+        const dist = Math.hypot(p.x - ent.x, p.y - ent.y);
+        if (dist < 25) {
+          touchingLava = true;
+          diffOwner = ent.ownerId;
+          break; // Found one, that's enough for damage
+        }
+      }
+
+      if (touchingLava) {
+        p.takeDamage(3, diffOwner); // Fixed 3 damage per tick
+        if (p.hp <= 0 && p.alive) {
+          this.killPlayer(p, diffOwner);
+        }
+      }
+    }
 
     // SPAWN TRAILS FOR VOLT PLAYERS
     this.players.forEach((p) => {
