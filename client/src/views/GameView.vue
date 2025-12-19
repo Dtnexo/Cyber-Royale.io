@@ -1728,6 +1728,38 @@ const drawPlayer = (ctx, p) => {
     ctx.restore();
   }
 
+  // --- SPRINT WIND EFFECT (User Request) ---
+  if (p.isSprinting) {
+    ctx.save();
+    // Wind Lines trailing behind
+    // Calculate angle opposite to movement (assuming facing mouseAngle approx or use velocity if available)
+    // We only have mouseAngle (p.angle). Let's use that for direction.
+    const trailAngle = p.angle + Math.PI; // Behind
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+
+    // Draw 3 randomish lines
+    const time = Date.now() / 100;
+    for (let i = 0; i < 3; i++) {
+      const offset = Math.sin(time + i) * 15;
+      const len = 20 + Math.random() * 15;
+
+      const startX = Math.cos(trailAngle) * 20 - Math.sin(trailAngle) * offset;
+      const startY = Math.sin(trailAngle) * 20 + Math.cos(trailAngle) * offset;
+
+      const endX = startX + Math.cos(trailAngle) * len;
+      const endY = startY + Math.sin(trailAngle) * len;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // --- DRAW PLAYER SHIP ---
   // Layer 1: Base Hull
   ctx.fillStyle = primaryColor;
@@ -1984,13 +2016,74 @@ const drawPlayer = (ctx, p) => {
     p.id === myId &&
     (p.skillCD || 0) <= 0
   ) {
-    ctx.beginPath();
-    ctx.moveTo(0, -35); // Start at gun tip (outside body)
-    ctx.lineTo(0, -2000); // 2000px aiming line (X-Ray)
+    let laserLen = 2000;
 
-    ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // 0.8 Opacity (Clearer)
-    ctx.lineWidth = 2; // Thicker to see dashes
-    ctx.setLineDash([20, 20]); // Larger dashes
+    // RAYCAST to stop at Walls (User Request: "ne traverse pas les murs")
+    const startX = p.x;
+    const startY = p.y;
+    // Angle is mouseAngle. p.angle is updated from server or local mouse logic.
+    // Ensure we use the same angle as the rotation: p.angle
+    const angle = p.angle;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+
+    const obstacles = mapData?.obstacles || [];
+
+    // Simple Ray-AABB Intersection
+    for (const obs of obstacles) {
+      // Check if wall is potentially in range (Optimization)
+      // ... Skip for now, low obst count
+
+      // Check intersection with each wall side
+      // Rect: x, y, w, h
+      const lines = [
+        { x1: obs.x, y1: obs.y, x2: obs.x + obs.w, y2: obs.y }, // Top
+        { x1: obs.x, y1: obs.y + obs.h, x2: obs.x + obs.w, y2: obs.y + obs.h }, // Bottom
+        { x1: obs.x, y1: obs.y, x2: obs.x, y2: obs.y + obs.h }, // Left
+        { x1: obs.x + obs.w, y1: obs.y, x2: obs.x + obs.w, y2: obs.y + obs.h }, // Right
+      ];
+
+      for (const line of lines) {
+        // Ray-Segment Intersection
+        // Ray: P + t*D
+        // Seg: A + u*(B-A)
+        const x1 = line.x1;
+        const y1 = line.y1;
+        const x2 = line.x2;
+        const y2 = line.y2;
+
+        const x3 = startX;
+        const y3 = startY;
+        const x4 = startX + dx * 2000;
+        const y4 = startY + dy * 2000;
+
+        const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (den === 0) continue; // Parallel
+
+        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
+
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+          // Hit!
+          // Distance from start
+          const hitX = x1 + t * (x2 - x1);
+          const hitY = y1 + t * (y2 - y1);
+          const dist = Math.sqrt((hitX - startX) ** 2 + (hitY - startY) ** 2);
+
+          if (dist < laserLen) {
+            laserLen = dist;
+          }
+        }
+      }
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(0, -35); // Start at gun tip
+    ctx.lineTo(0, -laserLen); // Draw to calculated dist
+
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // 0.8 Opacity
+    ctx.lineWidth = 2; // Thicker
+    ctx.setLineDash([20, 20]); // Dashed
 
     // Laser Glow
     ctx.shadowColor = "#ff0000";
@@ -1998,7 +2091,7 @@ const drawPlayer = (ctx, p) => {
 
     ctx.stroke();
     ctx.shadowBlur = 0; // Reset
-    ctx.setLineDash([]); // Reset Explicitly just in case
+    ctx.setLineDash([]); // Reset Explicitly
   }
 
   // FROST EFFECT (Frozen Enemy)

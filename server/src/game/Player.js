@@ -407,6 +407,8 @@ class Player {
         life: 3000,
         damage: 1000, // One Shot
         penetrateWalls: false, // Wall Hack REMOVED (User Request)
+        pierceEnemies: true, // Piercing Shot
+        hitList: [], // Track entities hit to avoid double damage
         trailDuration: 1500, // Metadata for Client
       };
     } else if (name === "Shadow") {

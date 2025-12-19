@@ -518,6 +518,7 @@ class BattleRoyaleManager {
         maxHp: p.maxHp,
         stamina: p.stamina,
         maxStamina: p.maxStamina,
+        isSprinting: p.keys.shift && p.stamina > 0,
         hero: p.hero.name,
         heroClass: p.hero.class,
         angle: p.mouseAngle,
@@ -694,6 +695,11 @@ class BattleRoyaleManager {
       for (const [pid, target] of this.players) {
         if (pid === proj.ownerId || !target.alive) continue;
 
+        // PIERCING LOGIC: Check if already hit
+        if (proj.pierceEnemies && proj.hitList && proj.hitList.includes(pid)) {
+          continue; // Already hit this player
+        }
+
         // RAYCAST CHECK
         // Segment: (prevX, prevY) -> (proj.x, proj.y)
         // Circle: (target.x, target.y) Radius 35
@@ -763,9 +769,16 @@ class BattleRoyaleManager {
             targetId: target.id, // Only this target flashes
           });
 
-          this.projectiles.splice(i, 1);
+          // Destroy projectile unless piercing
+          if (proj.pierceEnemies) {
+            if (!proj.hitList) proj.hitList = [];
+            proj.hitList.push(pid);
+          } else {
+            this.projectiles.splice(i, 1);
+          }
+
           if (target.hp <= 0) this.killPlayer(target, proj.ownerId);
-          break;
+          if (!proj.pierceEnemies) break; // Stop checking players if not piercing
         }
       }
     }

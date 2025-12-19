@@ -1142,6 +1142,11 @@ class GameServer {
               break; // Blocked by Fortress
             }
 
+            // PIERCING LOGIC: Check if already hit
+            if (p.pierceEnemies && p.hitList && p.hitList.includes(id)) {
+              continue; // Already hit this player, pass through
+            }
+
             // Apply Damage
             let damage = p.damage || 15;
 
@@ -1227,7 +1232,15 @@ class GameServer {
               attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
               // Visual cleanup? Handled by HUD update
             }
-            this.projectiles.splice(i, 1);
+            // Destroy projectile unless piercing
+            if (p.pierceEnemies) {
+              if (!p.hitList) p.hitList = [];
+              p.hitList.push(id);
+            } else {
+              this.projectiles.splice(i, 1);
+              hitWall = true;
+              break; // Stop at first hit
+            }
 
             // Handle Death
             if (player.hp <= 0) {
