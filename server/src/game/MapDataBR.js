@@ -264,13 +264,39 @@ buildQuadrant(1, 1, true, false); // Bottom Left
 buildQuadrant(1, 1, false, true); // Top Right
 buildQuadrant(1, 1, true, true); // Top Left
 
-// 5. SPAWNS (Edges)
-for (let i = 1; i <= 4; i++) {
-  MapDataBR.spawns.push({ x: i * 800, y: 200 }); // Top
-  MapDataBR.spawns.push({ x: i * 800, y: 3800 }); // Bot
-  MapDataBR.spawns.push({ x: 200, y: i * 800 }); // Left
-  MapDataBR.spawns.push({ x: 3800, y: i * 800 }); // Right
-}
+// 5. SPAWNS (More Spread Out - Edges + Some Middle)
+// EDGE SPAWNS (Most spawns around perimeter, well-spaced)
+// Top Edge (5 spawns)
+MapDataBR.spawns.push({ x: 400, y: 200 });
+MapDataBR.spawns.push({ x: 1200, y: 200 });
+MapDataBR.spawns.push({ x: 2000, y: 200 });
+MapDataBR.spawns.push({ x: 2800, y: 200 });
+MapDataBR.spawns.push({ x: 3600, y: 200 });
+
+// Bottom Edge (5 spawns)
+MapDataBR.spawns.push({ x: 400, y: 3800 });
+MapDataBR.spawns.push({ x: 1200, y: 3800 });
+MapDataBR.spawns.push({ x: 2000, y: 3800 });
+MapDataBR.spawns.push({ x: 2800, y: 3800 });
+MapDataBR.spawns.push({ x: 3600, y: 3800 });
+
+// Left Edge (4 spawns - avoid corners already covered)
+MapDataBR.spawns.push({ x: 200, y: 800 });
+MapDataBR.spawns.push({ x: 200, y: 1600 });
+MapDataBR.spawns.push({ x: 200, y: 2400 });
+MapDataBR.spawns.push({ x: 200, y: 3200 });
+
+// Right Edge (4 spawns)
+MapDataBR.spawns.push({ x: 3800, y: 800 });
+MapDataBR.spawns.push({ x: 3800, y: 1600 });
+MapDataBR.spawns.push({ x: 3800, y: 2400 });
+MapDataBR.spawns.push({ x: 3800, y: 3200 });
+
+// MIDDLE SPAWNS (4 spawns in mid-range areas, not center)
+MapDataBR.spawns.push({ x: 1000, y: 1000 }); // Top-Left quadrant
+MapDataBR.spawns.push({ x: 3000, y: 1000 }); // Top-Right quadrant
+MapDataBR.spawns.push({ x: 1000, y: 3000 }); // Bottom-Left quadrant
+MapDataBR.spawns.push({ x: 3000, y: 3000 }); // Bottom-Right quadrant
 
 // 6. CLEANUP BUSHES (Remove Bushes inside Bushes)
 // We iterate to find fully contained bushes and remove them.
