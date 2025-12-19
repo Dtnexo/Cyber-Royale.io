@@ -690,23 +690,32 @@ class GameServer {
                   const checkY = target.y + sin * (stepDist * s);
                   let hitsWall = false;
 
-                  // Map Bounds
+                  // Player Bounding Box (40x40)
+                  const pRect = {
+                    x: checkX - 20,
+                    y: checkY - 20,
+                    w: 40,
+                    h: 40,
+                  };
+
+                  // Map Bounds (Include Buffer)
                   if (
-                    checkX < 50 ||
-                    checkX > MapData.width - 50 ||
-                    checkY < 50 ||
-                    checkY > MapData.height - 50
+                    pRect.x < 50 ||
+                    pRect.x + pRect.w > MapData.width - 50 ||
+                    pRect.y < 50 ||
+                    pRect.y + pRect.h > MapData.height - 50
                   )
                     hitsWall = true;
 
                   // Obstacles
                   if (!hitsWall) {
                     for (const obs of obstacles) {
+                      // AABB Collision
                       if (
-                        checkX > obs.x &&
-                        checkX < obs.x + obs.w &&
-                        checkY > obs.y &&
-                        checkY < obs.y + obs.h
+                        pRect.x < obs.x + obs.w &&
+                        pRect.x + pRect.w > obs.x &&
+                        pRect.y < obs.y + obs.h &&
+                        pRect.y + pRect.h > obs.y
                       ) {
                         hitsWall = true;
                         break;
