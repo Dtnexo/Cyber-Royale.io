@@ -1889,7 +1889,7 @@ const drawPlayer = (ctx, p) => {
     ctx.stroke();
   }
 
-  ctx.stroke();
+  // ctx.stroke(); // REMOVED: Caused ghosting for Support class (re-stroked previous paths)
 
   // SNIPER LASER SIGHT
   // Visible ONLY to Local Player AND when Skill is Ready (E)
@@ -2363,8 +2363,17 @@ const loop = (ctx) => {
   if (target) {
     const targetX = target.x - window.innerWidth / 2;
     const targetY = target.y - window.innerHeight / 2;
-    cameraX += (targetX - cameraX) * 0.1;
-    cameraY += (targetY - cameraY) * 0.1;
+    
+    // FIX: Snap if distance is too large (Teleport/Knockback) to prevent culling visual glitch
+    // Goliath Knockback (400) was causing player to fly off-screen while camera lagged
+    const dist = Math.hypot(targetX - cameraX, targetY - cameraY);
+    if (dist > 300) {
+       cameraX = targetX;
+       cameraY = targetY;
+    } else {
+       cameraX += (targetX - cameraX) * 0.1;
+       cameraY += (targetY - cameraY) * 0.1;
+    }
   }
 
   // UPDATE & CLEAR

@@ -318,9 +318,45 @@ class GameServer {
                     let nx = p.x + Math.cos(angle) * force;
                     let ny = p.y + Math.sin(angle) * force;
 
+                    // COLLISION FIX: Raycast/Step check to prevent going through walls
+                    const steps = 20; // Check every 20px (400 / 20 = 20px)
+                    let finalX = p.x;
+                    let finalY = p.y;
+                    const stepX = (nx - p.x) / steps;
+                    const stepY = (ny - p.y) / steps;
+
+                    for(let i=1; i<=steps; i++) {
+                        const testX = p.x + stepX * i;
+                        const testY = p.y + stepY * i;
+
+                        // 1. Check Map Bounds
+                        if (testX < 0 || testX > 1600 || testY < 0 || testY > 1200) {
+                             break; // Stop at previous valid
+                        }
+
+                        // 2. Check Obstacles
+                        let collision = false;
+                        if (MapData && MapData.obstacles) {
+                            for (const obs of MapData.obstacles) {
+                                // Simple AABB Point Check (Player is small enough to treat as point for wall stop)
+                                // Add slight buffer (radius 15) for robustness
+                                if (testX > obs.x - 15 && testX < obs.x + obs.w + 15 &&
+                                    testY > obs.y - 15 && testY < obs.y + obs.h + 15) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (collision) break; // Hit wall, stop
+
+                        finalX = testX;
+                        finalY = testY;
+                    }
+
                     // Update Position
-                    p.x = Math.max(0, Math.min(1600, nx));
-                    p.y = Math.max(0, Math.min(1200, ny));
+                    p.x = finalX;
+                    p.y = finalY;
 
                     // Apply Damage
                     p.takeDamage(item.damage);
@@ -591,7 +627,8 @@ class GameServer {
                 // Safe Push Logic (Raycast against Obstacles)
                 const angle = Math.atan2(dy, dx);
                 const maxForce = 1000 * (1 - dist / blastRadius) + 200;
-                const steps = 8;
+                // FIX: Increase steps to prevent tunneling (1200px force needs small steps)
+                const steps = 40; // ~30px per step
                 const stepDist = maxForce / steps;
 
                 let safeX = target.x;

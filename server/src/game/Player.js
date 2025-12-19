@@ -261,7 +261,7 @@ class Player {
         x: this.x,
         y: this.y,
         radius: 250,
-        damage: 150,
+        damage: 0, // No Damage, only Push (User Request)
         knockback: 400,
         color: "#ffaa00" // Orange Impact
       };
