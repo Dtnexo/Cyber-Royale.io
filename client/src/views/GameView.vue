@@ -516,8 +516,6 @@ onMounted(async () => {
   window.addEventListener("mousemove", handleMouse);
   window.addEventListener("keypress", handleSkill);
   window.addEventListener("resize", handleResize);
-  window.addEventListener("wheel", preventZoomWheel, { passive: false });
-  window.addEventListener("keydown", preventZoomKeys);
 
   const ctx = canvasRef.value.getContext("2d");
 
@@ -578,8 +576,6 @@ onUnmounted(() => {
   window.removeEventListener("mousemove", handleMouse);
   window.removeEventListener("keypress", handleSkill);
   window.removeEventListener("resize", handleResize);
-  window.removeEventListener("wheel", preventZoomWheel);
-  window.removeEventListener("keydown", preventZoomKeys);
   cancelAnimationFrame(animationId);
 });
 
@@ -601,22 +597,6 @@ const handleMouse = (e) => {
 
 const handleSkill = (e) => {
   if (e.key.toLowerCase() === "e") socket.value.emit("skill_trigger");
-};
-
-// Prevent Browser Zooming
-const preventZoomWheel = (e) => {
-  if (e.ctrlKey) {
-    e.preventDefault();
-  }
-};
-
-const preventZoomKeys = (e) => {
-  if (
-    (e.ctrlKey && (e.key === "+" || e.key === "-" || e.key === "=")) ||
-    e.key === "F11" // Optional: Prevent fullscreen toggle if desired, but usually zoom is the issue
-  ) {
-    if (e.key !== "F11") e.preventDefault();
-  }
 };
 
 // --- MOBILE CONTROLS ---
