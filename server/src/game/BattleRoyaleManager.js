@@ -51,6 +51,27 @@ class BattleRoyaleManager {
     this.queue.push({ socket, playerData });
     socket.join("br_lobby");
 
+    // Secure Matchmaking Chat
+    socket.on("chat_message", (msg) => {
+      if (!msg || typeof msg !== "string" || msg.length > 200) return; // Basic validation
+
+      // Anti-Injection (Sanitization)
+      const safeMsg = msg
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+      // Broadcast to Lobby
+      this.io.to("br_lobby").emit("chat_update", {
+        username: playerData.username,
+        message: safeMsg,
+        skinColor: playerData.skinColor || "#00f3ff",
+        timestamp: Date.now(),
+      });
+    });
+
     this.io.to("br_lobby").emit("queue_update", {
       count: this.queue.length,
       max: this.MAX_PLAYERS,
@@ -447,31 +468,33 @@ class BattleRoyaleManager {
                 }
               }
             }
+          }
+        }
       }
     });
 
     // SPAWN TRAILS FOR VOLT PLAYERS
     this.players.forEach((p) => {
-        if (p.alive && p.staticFieldActive) {
-            const lx = p.lastTrailX || p.x;
-            const ly = p.lastTrailY || p.y;
-            const dist = Math.hypot(p.x - lx, p.y - ly);
+      if (p.alive && p.staticFieldActive) {
+        const lx = p.lastTrailX || p.x;
+        const ly = p.lastTrailY || p.y;
+        const dist = Math.hypot(p.x - lx, p.y - ly);
 
-            if (dist > 10) {
-                this.entities.push({
-                    type: "TRAIL_SEGMENT",
-                    x: p.x,
-                    y: p.y,
-                    ownerId: p.id,
-                    life: 3000,
-                    damage: 3,
-                    radius: 15,
-                    color: "#00f3ff"
-                });
-                p.lastTrailX = p.x;
-                p.lastTrailY = p.y;
-            }
+        if (dist > 10) {
+          this.entities.push({
+            type: "TRAIL_SEGMENT",
+            x: p.x,
+            y: p.y,
+            ownerId: p.id,
+            life: 3000,
+            damage: 3,
+            radius: 15,
+            color: "#00f3ff",
+          });
+          p.lastTrailX = p.x;
+          p.lastTrailY = p.y;
         }
+      }
     });
 
     const statePack = {
@@ -807,52 +830,52 @@ class BattleRoyaleManager {
 
     // ENTITIES (Volt Trails, etc.)
     for (let i = this.entities.length - 1; i >= 0; i--) {
-        const ent = this.entities[i];
-        if (ent.type === "TRAIL_SEGMENT") {
-            ent.life -= 30;
-            if (ent.life <= 0) {
-                this.entities.splice(i, 1);
-                continue;
-            }
-
-            // Damage Players
-            for (const [pid, target] of this.players) {
-                if (pid === ent.ownerId) continue;
-                if (!target.alive || target.invisible || target.isPhasing) continue;
-
-                const dist = Math.hypot(target.x - ent.x, target.y - ent.y);
-                if (dist < 25) {
-                    target.takeDamage(3, ent.ownerId); // Nerfed Damage (3)
-                    if (target.hp <= 0 && target.alive) {
-                        this.killPlayer(target, ent.ownerId);
-                    }
-                }
-            }
+      const ent = this.entities[i];
+      if (ent.type === "TRAIL_SEGMENT") {
+        ent.life -= 30;
+        if (ent.life <= 0) {
+          this.entities.splice(i, 1);
+          continue;
         }
+
+        // Damage Players
+        for (const [pid, target] of this.players) {
+          if (pid === ent.ownerId) continue;
+          if (!target.alive || target.invisible || target.isPhasing) continue;
+
+          const dist = Math.hypot(target.x - ent.x, target.y - ent.y);
+          if (dist < 25) {
+            target.takeDamage(3, ent.ownerId); // Nerfed Damage (3)
+            if (target.hp <= 0 && target.alive) {
+              this.killPlayer(target, ent.ownerId);
+            }
+          }
+        }
+      }
     }
 
     // SPAWN TRAILS FOR VOLT PLAYERS
     this.players.forEach((p) => {
-        if (p.alive && p.staticFieldActive) {
-            const lx = p.lastTrailX || p.x;
-            const ly = p.lastTrailY || p.y;
-            const dist = Math.hypot(p.x - lx, p.y - ly);
+      if (p.alive && p.staticFieldActive) {
+        const lx = p.lastTrailX || p.x;
+        const ly = p.lastTrailY || p.y;
+        const dist = Math.hypot(p.x - lx, p.y - ly);
 
-            if (dist > 10) {
-                this.entities.push({
-                    type: "TRAIL_SEGMENT",
-                    x: p.x,
-                    y: p.y,
-                    ownerId: p.id,
-                    life: 3000,
-                    damage: 3,
-                    radius: 15,
-                    color: "#00f3ff"
-                });
-                p.lastTrailX = p.x;
-                p.lastTrailY = p.y;
-            }
+        if (dist > 10) {
+          this.entities.push({
+            type: "TRAIL_SEGMENT",
+            x: p.x,
+            y: p.y,
+            ownerId: p.id,
+            life: 3000,
+            damage: 3,
+            radius: 15,
+            color: "#00f3ff",
+          });
+          p.lastTrailX = p.x;
+          p.lastTrailY = p.y;
         }
+      }
     });
 
     // BROADCAST

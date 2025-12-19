@@ -70,6 +70,16 @@ let shakeX = 0;
 let shakeY = 0;
 let flashAlpha = 0;
 
+// CHAT STATE
+const chatInput = ref("");
+const chatMessages = ref([]); // { username, message, skinColor, timestamp }
+
+const sendChatMessage = () => {
+  if (!chatInput.value.trim() || !socket.value) return;
+  socket.value.emit("chat_message", chatInput.value.trim());
+  chatInput.value = "";
+};
+
 const addScreenShake = (intensity, duration) => {
   shakeIntensity = intensity;
   shakeDuration = duration;
@@ -323,6 +333,12 @@ onMounted(async () => {
     inQueue.value = false;
     showCountdown.value = count > 0;
     countdownVal.value = count;
+  });
+
+  socket.value.on("chat_update", (msg) => {
+    chatMessages.value.push(msg);
+    // Keep last 50 messages
+    if (chatMessages.value.length > 50) chatMessages.value.shift();
   });
 
   socket.value.on("br_start", (data) => {
@@ -2951,6 +2967,35 @@ if (canvasRef.value) {
           >
         </div>
 
+        <!-- SECURE CHAT -->
+        <div class="mm-chat">
+          <div class="chat-window">
+            <div
+              v-for="msg in chatMessages"
+              :key="msg.timestamp"
+              class="chat-line"
+            >
+              <span class="chat-author" :style="{ color: msg.skinColor }">{{
+                msg.username
+              }}</span>
+              <span class="chat-content">{{ msg.message }}</span>
+            </div>
+            <div v-if="chatMessages.length === 0" class="chat-empty">
+              SECURE CHANNEL OPEN...
+            </div>
+          </div>
+          <div class="chat-controls">
+            <input
+              v-model="chatInput"
+              @keyup.enter="sendChatMessage"
+              placeholder="TRANSMIT MESSAGE..."
+              class="cyber-input"
+              maxlength="200"
+            />
+            <button @click="sendChatMessage" class="btn-send">►</button>
+          </div>
+        </div>
+
         <button
           class="btn-quit"
           style="margin-top: 20px"
@@ -4304,5 +4349,104 @@ if (canvasRef.value) {
   to {
     opacity: 0.3;
   }
+}
+
+/* === SECURE CHAT STYLES === */
+.mm-chat {
+  margin-top: 15px;
+  width: 100%;
+  max-width: 450px;
+  background: rgba(0, 5, 10, 0.6);
+  border: 1px solid rgba(0, 243, 255, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  backdrop-filter: blur(5px);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-window {
+  height: 150px;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Custom Scrollbar */
+.chat-window::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-window::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 2px;
+}
+
+.chat-line {
+  font-size: 0.9rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.chat-author {
+  font-weight: bold;
+  text-shadow: 0 0 5px currentColor;
+  margin-right: 8px;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.chat-content {
+  color: #ddd;
+}
+
+.chat-empty {
+  color: rgba(0, 243, 255, 0.4);
+  font-style: italic;
+  text-align: center;
+  margin-top: auto;
+  margin-bottom: auto;
+  font-size: 0.8rem;
+}
+
+.chat-controls {
+  display: flex;
+  border-top: 1px solid rgba(0, 243, 255, 0.2);
+  padding: 5px;
+  background: rgba(0, 243, 255, 0.05);
+}
+
+.cyber-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-family: "Segoe UI", sans-serif;
+  padding: 8px;
+  outline: none;
+  font-size: 0.9rem;
+}
+
+.cyber-input::placeholder {
+  color: rgba(0, 243, 255, 0.4);
+  font-style: italic;
+}
+
+.btn-send {
+  background: transparent;
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  color: #00f3ff;
+  cursor: pointer;
+  padding: 0 15px;
+  font-weight: bold;
+  transition: all 0.2s;
+  border-radius: 4px;
+}
+
+.btn-send:hover {
+  background: rgba(0, 243, 255, 0.2);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.4);
 }
 </style>
