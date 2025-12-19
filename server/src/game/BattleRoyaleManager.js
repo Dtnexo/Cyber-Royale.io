@@ -19,6 +19,31 @@ class BattleRoyaleManager {
     this.queueTimer = null;
     this.startTime = 0;
     this.chatHistory = []; // { username, message, skinColor, timestamp }
+    this.badWords = [
+      "salope",
+      "connard",
+      "putain",
+      "merde",
+      "fuck",
+      "shit",
+      "pute",
+      "enculé",
+      "bitch",
+      "asshole",
+      "pd",
+      "negro",
+      "nigger",
+      "nigga",
+      "fagot",
+      "faggot",
+      "bougnoule",
+      "raton",
+      "youpin",
+      "triso",
+      "mongol",
+      "niger",
+      "tg",
+    ];
   }
 
   joinQueue(socket, playerData) {
@@ -47,7 +72,12 @@ class BattleRoyaleManager {
     }
 
     // No renaming, just use the name
-    playerData.username = username;
+    // PROFANITY FILTER FOR USERNAME
+    if (this.badWords.some((word) => username.toLowerCase().includes(word))) {
+      playerData.username = "Guest";
+    } else {
+      playerData.username = username;
+    }
 
     this.queue.push({ socket, playerData });
     socket.join("br_lobby");
@@ -60,18 +90,7 @@ class BattleRoyaleManager {
       if (!msg || typeof msg !== "string" || msg.length > 200) return; // Basic validation
 
       // PROFANITY FILTER (Basic)
-      const badWords = [
-        "salope",
-        "connard",
-        "putain",
-        "merde",
-        "fuck",
-        "shit",
-        "pute",
-        "enculé",
-        "bitch",
-        "asshole",
-      ];
+      const badWords = this.badWords;
       let filteredMsg = msg;
 
       const isProfane = badWords.some((word) =>
@@ -600,6 +619,11 @@ class BattleRoyaleManager {
       }
 
       if (p.alive) {
+        // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "invisible on kill" bug)
+        if (p.hero.name !== "Mirage" && p.hero.name !== "Shadow") {
+          p.isInvisible = false;
+        }
+
         p.update(dt, true); // Enable Sprint for BR
 
         // Zone Damage

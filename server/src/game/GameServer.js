@@ -147,6 +147,35 @@ class GameServer {
             }
 
             if (hero) {
+              // PROFANITY FILTER
+              const badWords = [
+                "salope",
+                "connard",
+                "putain",
+                "merde",
+                "fuck",
+                "shit",
+                "pute",
+                "enculé",
+                "bitch",
+                "asshole",
+                "pd",
+                "negro",
+                "nigger",
+                "nigga",
+                "fagot",
+                "faggot",
+                "bougnoule",
+                "raton",
+                "youpin",
+                "triso",
+                "mongol",
+                "niger",
+                "tg",
+              ];
+              if (badWords.some((w) => username.toLowerCase().includes(w))) {
+                username = "Guest";
+              }
               // Battle Royale Join
               if (mode === "battle_royale") {
                 this.brManager.joinQueue(socket, {
@@ -386,18 +415,10 @@ class GameServer {
                     // Check Death (Reuse death logic or let main loop handle it? Main loop handles it safer)
                     // But we want kill credit immediately if possible.
                     // For simplicity, let the main loop cleanup 'hp <= 0'
-                    if (p.hp <= 0) {
-                      const killer = this.players.get(item.ownerId);
-                      if (killer) {
-                        killer.kills++;
-                        killer.hp = Math.min(killer.maxHp, killer.hp + 50);
-                        this.awardCoins(killer.username, 50);
-                        this.io.to(item.ownerId).emit("kill_confirmed", {
-                          victim: p.username || p.hero.name,
-                        });
-                        p.killedBy = killer.username;
-                        p.killedByHero = killer.hero.name;
-                      }
+                    // Check Death
+                    if (p.hp <= 0 && !p.isDead) {
+                      // Added isDead check to avoid double-kill
+                      this.handlePlayerDeath(p, item.ownerId);
                     }
                   }
                 }
@@ -529,7 +550,7 @@ class GameServer {
       this.players.forEach((player) => {
         // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "New Heroes invisible on kill")
         if (player.hero.name !== "Mirage" && player.hero.name !== "Shadow") {
-          player.invisible = false;
+          player.isInvisible = false;
         }
         // SAFEGUARD: NaN HP check
         if (isNaN(player.hp)) player.hp = player.maxHp;
@@ -548,6 +569,7 @@ class GameServer {
             player.cooldowns.shoot = 0;
             player.freezeEndTime = 0;
             player.isFrozen = false;
+            player.isInvisible = false; // Fix for respawn invisibility bug
             player.killedBy = null;
             player.killedByHero = null;
           } else {
@@ -1230,23 +1252,23 @@ class GameServer {
             if (attacker && attacker.lifestealActive && !attacker.isDead) {
               const heal = Math.floor(damage * 0.5); // Heal 50% of damage dealt
               attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
-              // Visual cleanup? Handled by HUD update
             }
+
+            // Handle Death (Moved UP to ensure it runs before break)
+            if (player.hp <= 0) {
+              this.handlePlayerDeath(player, p.ownerId);
+            }
+
             // Destroy projectile unless piercing
             if (p.pierceEnemies) {
               if (!p.hitList) p.hitList = [];
               p.hitList.push(id);
+              // Continue to next player (Piercing)
             } else {
               this.projectiles.splice(i, 1);
               hitWall = true;
               break; // Stop at first hit
             }
-
-            // Handle Death
-            if (player.hp <= 0) {
-              this.handlePlayerDeath(player, p.ownerId);
-            }
-            break; // Projectile destroyed
           }
         }
       }

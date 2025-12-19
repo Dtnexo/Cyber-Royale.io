@@ -2469,39 +2469,12 @@ const drawFireTrails = (ctx) => {
 
     ctx.restore();
 
-    // Spawn Ghosts (Sprint)
-    if (
-      p.id === myId &&
-      keys.shift &&
-      (Math.abs(p.vx) > 1 || Math.abs(p.vy) > 1)
-    ) {
-      // Limit ghost spawn rate (e.g. every 3rd frame)
-      if (!p.ghostTimer) p.ghostTimer = 0;
-      p.ghostTimer++;
-      if (p.ghostTimer % 3 === 0) {
-        if (!ghosts.value) ghosts.value = [];
-        ghosts.value.push({
-          x: p.x,
-          y: p.y,
-          angle: p.angle,
-          heroClass: p.heroClass,
-          hero: p.hero,
-          color: p.color,
-          alpha: 0.4,
-          timestamp: Date.now(),
-        });
-      }
-    }
-
     // Add smoke particles
     if (Math.random() < 0.1) {
       createParticle(p.x, p.y, "#555", 1, 30, "smoke");
     }
   });
 };
-
-// --- GHOST TRAIL (Sprint) ---
-const ghosts = ref([]);
 
 const drawHeroBody = (ctx, p, color, alpha = 1) => {
   // Reusable Hero Shape Drawer
@@ -2609,38 +2582,6 @@ const drawHeroBody = (ctx, p, color, alpha = 1) => {
     ctx.stroke();
   }
   ctx.restore();
-};
-
-const drawGhostTrails = (ctx) => {
-  if (!ghosts.value) return;
-
-  for (let i = ghosts.value.length - 1; i >= 0; i--) {
-    const g = ghosts.value[i];
-    g.alpha -= 0.05; // Fade out
-
-    if (g.alpha <= 0) {
-      ghosts.value.splice(i, 1);
-      continue;
-    }
-
-    const screenX = g.x - cameraX;
-    const screenY = g.y - cameraY;
-
-    ctx.save();
-    ctx.translate(screenX, screenY);
-    ctx.rotate(g.angle); // Rotate match player
-
-    // Mock player object for drawHeroBody
-    const pMock = {
-      heroClass: g.heroClass,
-      hero: g.hero,
-      shield: false, // No shield on ghosts for cleaner look
-    };
-
-    drawHeroBody(ctx, pMock, g.color, g.alpha);
-
-    ctx.restore();
-  }
 };
 
 const drawVoltTrails = (ctx) => {
@@ -2935,7 +2876,7 @@ const loop = (ctx) => {
 
   // 8. PARTICLES & VFX (Over Everything usually)
   drawMarkers(ctx); // GHOST TELEPORT MARKERS
-  drawGhostTrails(ctx); // NEW GHOST TRAILS
+
   drawParticles(ctx);
   drawShockwaves(ctx);
   drawSupernovas(ctx); // NEW SUPERNOVA LAYER
