@@ -57,6 +57,7 @@ const myRank = ref(0);
 const earnedCoins = ref(0);
 const winnerName = ref("");
 const isWinner = ref(false);
+const myStats = ref({ stamina: 100, maxStamina: 100 }); // Reactive stats for HUD
 
 let brZone = null;
 let crates = [];
@@ -144,7 +145,14 @@ const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
 
 // Inputs
-const keys = { w: false, a: false, s: false, d: false, space: false };
+const keys = {
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+  space: false,
+  shift: false,
+};
 let mouseAngle = 0;
 
 // Config
@@ -236,6 +244,7 @@ onMounted(async () => {
     if (e.key === "s" || e.key === "S") keys.s = true;
     if (e.key === "d" || e.key === "D") keys.d = true;
     if (e.key === " ") keys.space = true;
+    if (e.key === "Shift") keys.shift = true;
     if (e.key === "e" || e.key === "E") {
       if (socket.value) socket.value.emit("skill_trigger");
     }
@@ -247,6 +256,7 @@ onMounted(async () => {
     if (e.key === "s" || e.key === "S") keys.s = false;
     if (e.key === "d" || e.key === "D") keys.d = false;
     if (e.key === " ") keys.space = false;
+    if (e.key === "Shift") keys.shift = false;
   };
 
   // Add event listeners
@@ -388,6 +398,11 @@ onMounted(async () => {
       skillCD.value = me.skillCD || 0;
       maxSkillCD.value = me.maxSkillCD || 1;
       maxSkillCD.value = me.maxSkillCD || 1;
+
+      // Update reactive stats for HUD
+      myStats.value.stamina = me.stamina !== undefined ? me.stamina : 100;
+      myStats.value.maxStamina = me.maxStamina || 100;
+
       // Respect server-side death state
       if (me.isDead) {
         isDead.value = true;
@@ -3014,6 +3029,21 @@ if (canvasRef.value) {
         @click="triggerSkill"
         @touchstart.prevent="triggerSkill"
       >
+        <!-- STAMINA BAR (Battle Royale Only) -->
+        <div
+          class="skill-stamina-bar"
+          v-if="route.query.mode === 'battle_royale'"
+          :class="{ exhausted: myStats.stamina < 5 }"
+        >
+          <div
+            class="stamina-fill"
+            :style="{
+              width: (myStats.stamina / myStats.maxStamina) * 100 + '%',
+              backgroundColor: myStats.stamina > 20 ? '#00f3ff' : '#ff3300',
+            }"
+          ></div>
+        </div>
+
         <div
           class="skill-box"
           :class="{
@@ -3066,7 +3096,10 @@ if (canvasRef.value) {
     </div>
 
     <div class="controls-hint" v-if="!isMobile">
-      WASD: Move | MOUSE: Aim | Space: Shoot
+      <span v-if="route.query.mode === 'battle_royale'">
+        WASD: Move | MOUSE: Aim | Space: Shoot | Sprint: Shift
+      </span>
+      <span v-else> WASD: Move | MOUSE: Aim | Space: Shoot </span>
     </div>
 
     <!-- Mobile Controls Containers -->
@@ -4127,5 +4160,42 @@ if (canvasRef.value) {
   line-height: 1;
   font-family: "Segoe UI", sans-serif;
   text-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+}
+
+/* STAMINA BAR (Integrated with Skill) */
+.skill-stamina-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  margin-bottom: 5px; /* Space between bar and skill box */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.stamina-fill {
+  height: 100%;
+  transition: width 0.1s linear, background-color 0.2s;
+  box-shadow: 0 0 5px currentColor;
+}
+
+/* Exhausted Animation */
+.skill-stamina-bar.exhausted {
+  border-color: #ff0000;
+  box-shadow: 0 0 10px #ff0000;
+}
+
+.skill-stamina-bar.exhausted .stamina-fill {
+  background-color: #ff0000 !important;
+  animation: low-stamina-flash 0.3s infinite alternate;
+}
+
+@keyframes low-stamina-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
 }
 </style>

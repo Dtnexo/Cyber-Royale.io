@@ -24,7 +24,14 @@ class Player {
       this.color = `hsl(${randomHue}, 100%, 50%)`;
     }
 
-    this.keys = { w: false, a: false, s: false, d: false, space: false };
+    this.keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+      space: false,
+      shift: false,
+    };
     this.mouseAngle = 0;
     this.cooldowns = { skill: 0, shoot: 0 };
 
@@ -33,14 +40,16 @@ class Player {
     this.isPhasing = false; // Walk through walls
     this.isInvisible = false;
     this.isRooted = false; // Cannot move
-    this.isRooted = false; // Cannot move
-    this.isRooted = false; // Cannot move
     this.rapidFire = false; // Fast shooting
     this.isSkillActive = false; // Visual Aura Flag
     this.freezeShotsActive = false; // Frost skill duration flag
 
+    // SPRINT STAMINA (Battle Royale only)
+    this.stamina = 100;
+    this.maxStamina = 100;
+    this.lastSprintTime = 0;
+
     // BATTLE ROYALE STATS
-    // REGEN LOGIC
     // REGEN LOGIC
     this.lastDamageTime = Date.now();
     this.lastShootTime = 0;
@@ -84,6 +93,16 @@ class Player {
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
 
+    // STAMINA REGENERATION (Battle Royale Sprint)
+    const now = Date.now();
+    const timeSinceLastSprint = now - this.lastSprintTime;
+
+    // Regenerate stamina if not sprinting for 4 seconds
+    if (timeSinceLastSprint > 4000 && this.stamina < this.maxStamina) {
+      this.stamina += 25 * dt; // Regenerate 25 stamina per second
+      if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
+    }
+
     // VOLT: STATIC FIELD DAMAGE
     if (this.staticFieldActive) {
       if (!this.lastStaticZap) this.lastStaticZap = 0;
@@ -102,8 +121,17 @@ class Player {
 
     if (this.isRooted) return; // Skip movement
 
+    // SPRINT LOGIC (Battle Royale)
+    let sprintMultiplier = 1.0;
+    if (this.keys.shift && this.stamina > 0) {
+      sprintMultiplier = 1.5; // 50% speed boost
+      this.stamina -= 20 * dt; // Consume 20 stamina per second
+      if (this.stamina < 0) this.stamina = 0;
+      this.lastSprintTime = Date.now();
+    }
+
     // Basic movement logic
-    const moveStep = this.speed * dt;
+    const moveStep = this.speed * sprintMultiplier * dt;
 
     // --- X AXIS MOVEMENT ---
     let dx = 0;
@@ -378,7 +406,7 @@ class Player {
         color: "#fff",
         life: 3000,
         damage: 1000, // One Shot
-        penetrateWalls: true, // Wall Hack
+        penetrateWalls: false, // Wall Hack REMOVED (User Request)
         trailDuration: 1500, // Metadata for Client
       };
     } else if (name === "Shadow") {
