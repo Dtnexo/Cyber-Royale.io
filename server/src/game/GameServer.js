@@ -299,7 +299,7 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE") {
+              } else if (item.type === "SHOCKWAVE" || item.type === "SEISMIC_SLAM") {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
@@ -1030,7 +1030,7 @@ class GameServer {
             }
 
             // FREEZE EFFECT
-            if (p.effect === "FREEZE") {
+            if (p.effect === "FREEZE" && !player.isUnstoppable) {
               player.isFrozen = true;
               player.speed = 0;
               player.freezeEndTime = Date.now() + 2000;
@@ -1044,7 +1044,9 @@ class GameServer {
             // POISON EFFECT (VIPER)
             if (p.isPoison) {
               damage += 25;
-              player.speed = player.baseSpeed * 0.4;
+              if (!player.isUnstoppable) {
+                 player.speed = player.baseSpeed * 0.4;
+              }
               player.isPoisoned = true;
 
               if (player.poisonTimeout) clearTimeout(player.poisonTimeout);
@@ -1063,7 +1065,29 @@ class GameServer {
               });
             }
 
+            // REFLECT DAMAGE (Citadel)
+            if (player.reflectDamage && attacker && attacker.id !== player.id) {
+               const reflectDmg = Math.floor(damage * 0.5); // Reflect 50%
+               attacker.takeDamage(reflectDmg);
+               this.io.emit("visual_effect", {
+                  type: "reflect",
+                  targetId: attacker.id,
+                  x: attacker.x,
+                  y: attacker.y
+               });
+               // Prevent full damage to Citadel? 
+               // User asked for "Meilleur", let's say he takes half damage too?
+               damage = Math.floor(damage * 0.5); 
+            }
+
             player.takeDamage(damage);
+
+             // LIFESTEAL (Brawler)
+             if (attacker && attacker.lifestealActive && !attacker.isDead) {
+                const heal = Math.floor(damage * 0.5); // Heal 50% of damage dealt
+                attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+                // Visual cleanup? Handled by HUD update
+             }
             this.projectiles.splice(i, 1);
 
             // Handle Death

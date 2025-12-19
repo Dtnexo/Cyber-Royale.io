@@ -231,24 +231,41 @@ class Player {
       this.cooldowns.skill += 5000;
       duration = 5000;
       this.hp = Math.min(this.hp + 200, this.maxHp + 200);
-      this.speed = this.baseSpeed * 0.5;
+      this.isUnstoppable = true; // Buff: Immune to Slow/Stun
+      // this.speed = this.baseSpeed * 0.5; // REMOVED Speed Penalty
       setTimeout(() => {
-        this.speed = this.baseSpeed;
+        // this.speed = this.baseSpeed;
+        this.isUnstoppable = false;
       }, 5000);
     } else if (name === "Brawler") {
       this.cooldowns.skill += 3000;
       duration = 2000; // Nerfed Duration
       this.rapidFire = true;
       this.speed = this.baseSpeed * 1.3;
+      this.lifestealActive = true; // Buff: Vampirism
       setTimeout(() => {
         this.rapidFire = false;
         this.speed = this.baseSpeed;
+        this.lifestealActive = false;
       }, 2000);
     } else if (name === "Goliath") {
       this.cooldowns.skill += 3000;
       duration = 3000;
       this.shieldActive = true;
       this.hp = Math.min(this.maxHp, this.hp + 100);
+      
+      // BUFF: SEISMIC SLAM (Immediate AOE)
+      result = {
+        type: "SEISMIC_SLAM",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 250,
+        damage: 150,
+        knockback: 400,
+        color: "#ffaa00" // Orange Impact
+      };
+
       setTimeout(() => {
         // this.isRooted = false; // Removed Root
         this.shieldActive = false;
@@ -317,9 +334,15 @@ class Player {
     else if (name === "Blaze") {
       this.cooldowns.skill += 3000;
       duration = 3000;
-      // Rapid Fire
+      // Rapid Fire + Speed Boost (Buff)
       this.rapidFire = true;
-      setTimeout(() => (this.rapidFire = false), 3000);
+      this.speed = this.baseSpeed * 1.4; // Added Speed
+      this.hasFireTrail = true; // Visual + Mechanic?
+      setTimeout(() => {
+         this.rapidFire = false;
+         this.speed = this.baseSpeed;
+         this.hasFireTrail = false;
+      }, 3000);
     } else if (name === "Frost") {
       this.cooldowns.skill += 5000;
       duration = 5000;
@@ -374,14 +397,16 @@ class Player {
     // --- NEW HEROES (EXPANSION) ---
     else if (name === "Citadel") {
       duration = 3000;
-      // Fortress Mode: Invincible but Immobile
+      // Fortress Mode: Invincible + Reflect + Slow Move (Buff)
       this.isInvincible = true;
-      this.speed = 0;
+      this.speed = this.baseSpeed * 0.5; // BUFF: Can move now
       this.shieldActive = true;
+      this.reflectDamage = true; // BUFF: Thorns
       setTimeout(() => {
         this.isInvincible = false;
-        // this.speed = this.baseSpeed; // REMOVED Immobility
+        this.speed = this.baseSpeed; 
         this.shieldActive = false;
+        this.reflectDamage = false;
       }, 3000);
     } else if (name === "Magma") {
       duration = 500;

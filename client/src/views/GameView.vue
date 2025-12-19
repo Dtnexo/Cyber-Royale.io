@@ -1505,6 +1505,62 @@ const drawPlayer = (ctx, p) => {
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2);
 
+    // === VISUAL BUFFS (Hero Specific) ===
+
+    // TITAN: Unstoppable (Gold Aura)
+    if (p.isUnstoppable) {
+      ctx.save();
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#ffd700"; // Gold
+      ctx.strokeStyle = "#ffd700";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      // Undo rotation for stable aura? No, circle doesn't matter.
+      ctx.arc(0, 0, 28, 0, Math.PI * 2); 
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // BRAWLER: Vampirism (Red Aura)
+    if (p.lifestealActive) {
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#ff0000";
+      ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // CITADEL: Reflect (Spikes/Thorns)
+    if (p.reflectDamage) {
+       ctx.save();
+       ctx.strokeStyle = "#fff"; // White Spikes
+       ctx.lineWidth = 2;
+       ctx.beginPath();
+       const count = 8;
+       for(let i=0; i<count; i++) {
+          // Fixed Spikes relative to player rotation
+          const a = (i * Math.PI * 2 / count);
+          const r1 = 25;
+          const r2 = 35;
+          ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+          ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+       }
+       ctx.stroke();
+       ctx.restore();
+    }
+
+    // BLAZE: Fire Trail (Particle Spawner)
+    if (p.hasFireTrail) {
+       // Spawn particles locally 
+       // Check if visible to client (Optimization)
+       if (Math.random() < 0.3) {
+           createParticle(p.x, p.y, "#ff4500", 2, 20); // Fire color
+       }
+    }
+
   // --- TESLA STORM VISUAL ZONE (ACTIVE SKILL) ---
   // Improved Visibility & Robust Check
   if (p.isSkillActive && heroName === "Storm") {
