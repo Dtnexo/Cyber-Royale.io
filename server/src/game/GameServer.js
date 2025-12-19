@@ -464,6 +464,14 @@ class GameServer {
         this.brManager.leaveQueue(socket);
       });
 
+      socket.on("spectate_request", () => {
+        this.brManager.handleSpectate(socket);
+      });
+
+      socket.on("play_again", () => {
+        this.brManager.handlePlayAgain(socket);
+      });
+
       socket.on("disconnect", () => {
         this.brManager.handleDisconnect(socket);
         const p = this.players.get(socket.id);

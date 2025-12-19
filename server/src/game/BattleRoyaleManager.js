@@ -997,6 +997,7 @@ class BattleRoyaleManager {
   killPlayer(victim, killerId) {
     victim.alive = false;
     victim.hp = 0;
+    victim.killedById = killerId; // Store for spectate
 
     // Notify Victim of Rank
     let rank = 0;
@@ -1115,6 +1116,61 @@ class BattleRoyaleManager {
         }
       }
     }
+  }
+
+  handleSpectate(socket) {
+    // Find the player who died
+    const player = this.players.get(socket.id);
+    if (!player || player.alive) return; // Only dead players can spectate
+
+    // Find alive players to spectate
+    const alivePlayers = [];
+    for (const [pid, p] of this.players) {
+      if (p.alive) alivePlayers.push(pid);
+    }
+
+    if (alivePlayers.length === 0) {
+      socket.emit("spectate_failed", "No alive players to spectate");
+      return;
+    }
+
+    // Default: spectate killer if alive, otherwise first alive player
+    let targetId = player.killedById || alivePlayers[0];
+
+    // Verify target is still alive
+    const target = this.players.get(targetId);
+    if (!target || !target.alive) {
+      targetId = alivePlayers[0];
+    }
+
+    player.spectatingId = targetId;
+    socket.emit("spectate_start", { targetId });
+  }
+
+  handlePlayAgain(socket) {
+    const player = this.players.get(socket.id);
+    if (!player) return;
+
+    // Remove from active match
+    this.players.delete(socket.id);
+
+    // Check if match should end
+    const aliveCount = Array.from(this.players.values()).filter(
+      (p) => p.alive
+    ).length;
+    if (aliveCount <= 1 && this.state === "active") {
+      this.endMatch();
+    }
+
+    // Re-add to queue
+    const playerData = {
+      id: socket.id,
+      hero: player.hero,
+      username: player.username,
+      skinColor: player.color,
+    };
+
+    this.joinQueue(socket, playerData);
   }
 
   endMatch() {
