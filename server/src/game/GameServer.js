@@ -59,11 +59,12 @@ class GameServer {
             username = "Unknown"; // No Token = Guest
           }
 
-          // SECURITY: Prevent Hero Switching while active
-          // SECURITY: Prevent Hero Switching while active
+          // Cleanup existing session for this socket (Allow Mode Switching)
           if (this.players.has(socket.id)) {
-            return;
+            this.players.delete(socket.id);
           }
+          // Cleanup BR (Queue or Match)
+          this.brManager.handleDisconnect(socket);
 
           // === GLOBAL SINGLE SESSION ENFORCEMENT ===
           if (username && username !== "Unknown") {
@@ -112,8 +113,10 @@ class GameServer {
 
             // CRITICAL FIX: If hero ID is invalid/missing, fallback to default immediately
             if (!hero) {
-               console.warn(`[SERVER] Hero ID ${heroId} not found. Defaulting to free hero.`);
-               hero = await Hero.findOne({ where: { price: 0 } });
+              console.warn(
+                `[SERVER] Hero ID ${heroId} not found. Defaulting to free hero.`
+              );
+              hero = await Hero.findOne({ where: { price: 0 } });
             }
 
             if (hero && !isAllowed) {
@@ -214,7 +217,8 @@ class GameServer {
                   socket.id,
                   hero.toJSON(),
                   username,
-                  skinColor
+                  skinColor,
+                  "arena"
                 );
 
                 // Set Arena Map Context
@@ -305,7 +309,12 @@ class GameServer {
                   if (idx > -1) this.entities.splice(idx, 1);
                 }, item.life);
                 // SUPERNOVA LOGIC (Triggered by Player State)
-              } else if (item.type === "SHOCKWAVE" || item.type === "SEISMIC_SLAM" || item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") {
+              } else if (
+                item.type === "SHOCKWAVE" ||
+                item.type === "SEISMIC_SLAM" ||
+                item.type === "FEAR_WAVE" ||
+                item.type === "WARP_BLAST"
+              ) {
                 // Immediate AoE Effect
                 for (const [pid, p] of this.players) {
                   if (pid === item.ownerId) continue;
@@ -331,33 +340,42 @@ class GameServer {
                     const stepX = (nx - p.x) / steps;
                     const stepY = (ny - p.y) / steps;
 
-                    for(let i=1; i<=steps; i++) {
-                        const testX = p.x + stepX * i;
-                        const testY = p.y + stepY * i;
+                    for (let i = 1; i <= steps; i++) {
+                      const testX = p.x + stepX * i;
+                      const testY = p.y + stepY * i;
 
-                        // 1. Check Map Bounds
-                        if (testX < 0 || testX > 1600 || testY < 0 || testY > 1200) {
-                             break; // Stop at previous valid
+                      // 1. Check Map Bounds
+                      if (
+                        testX < 0 ||
+                        testX > 1600 ||
+                        testY < 0 ||
+                        testY > 1200
+                      ) {
+                        break; // Stop at previous valid
+                      }
+
+                      // 2. Check Obstacles
+                      let collision = false;
+                      if (MapData && MapData.obstacles) {
+                        for (const obs of MapData.obstacles) {
+                          // Simple AABB Point Check (Player is small enough to treat as point for wall stop)
+                          // Add slight buffer (radius 15) for robustness
+                          if (
+                            testX > obs.x - 15 &&
+                            testX < obs.x + obs.w + 15 &&
+                            testY > obs.y - 15 &&
+                            testY < obs.y + obs.h + 15
+                          ) {
+                            collision = true;
+                            break;
+                          }
                         }
+                      }
 
-                        // 2. Check Obstacles
-                        let collision = false;
-                        if (MapData && MapData.obstacles) {
-                            for (const obs of MapData.obstacles) {
-                                // Simple AABB Point Check (Player is small enough to treat as point for wall stop)
-                                // Add slight buffer (radius 15) for robustness
-                                if (testX > obs.x - 15 && testX < obs.x + obs.w + 15 &&
-                                    testY > obs.y - 15 && testY < obs.y + obs.h + 15) {
-                                    collision = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (collision) break; // Hit wall, stop
+                      if (collision) break; // Hit wall, stop
 
-                        finalX = testX;
-                        finalY = testY;
+                      finalX = testX;
+                      finalY = testY;
                     }
 
                     // Update Position
@@ -387,7 +405,10 @@ class GameServer {
                 }
                 // Emulate Visual Explosion
                 this.io.emit("visual_effect", {
-                  type: (item.type === "FEAR_WAVE" || item.type === "WARP_BLAST") ? item.type : "shockwave",
+                  type:
+                    item.type === "FEAR_WAVE" || item.type === "WARP_BLAST"
+                      ? item.type
+                      : "shockwave",
                   x: item.x,
                   y: item.y,
                   radius: item.radius,
@@ -717,7 +738,8 @@ class GameServer {
             const range = 300;
 
             for (const [tid, target] of this.players) {
-              if (tid === player.id || target.isDead || target.isPhasing) continue; // Phasing Immunity
+              if (tid === player.id || target.isDead || target.isPhasing)
+                continue; // Phasing Immunity
 
               const dist = Math.hypot(target.x - player.x, target.y - player.y);
               if (dist < range) {
@@ -829,54 +851,55 @@ class GameServer {
         } else if (ent.type === "DECOY") {
           // Decoy logic if needed
         } else if (ent.type === "TRAIL_SEGMENT") {
-             // Lifetime
-             ent.life -= 30; // 30ms tick
-             if (ent.life <= 0) {
-                 this.entities.splice(i, 1);
-                 continue;
-             }
-             
-             // Damage Players
-             for (const [pid, p] of this.players) {
-                 if (pid === ent.ownerId) continue;
-                 if (p.isDead || p.isPhasing) continue; // Phasing immune
-                 if (p.invincible) continue;
-                 
-                 const dist = Math.hypot(p.x - ent.x, p.y - ent.y);
-                 if (dist < 25) { // Increased Hitbox (User Request)
-                     // Apply Damage
-                     // Increased damage per tick (Buffed 4 -> 12)
-                     p.takeDamage(12); 
-                     // No knockback, just burn.
-                 }
-             }
+          // Lifetime
+          ent.life -= 30; // 30ms tick
+          if (ent.life <= 0) {
+            this.entities.splice(i, 1);
+            continue;
+          }
+
+          // Damage Players
+          for (const [pid, p] of this.players) {
+            if (pid === ent.ownerId) continue;
+            if (p.isDead || p.isPhasing) continue; // Phasing immune
+            if (p.invincible) continue;
+
+            const dist = Math.hypot(p.x - ent.x, p.y - ent.y);
+            if (dist < 25) {
+              // Increased Hitbox (User Request)
+              // Apply Damage
+              // Increased damage per tick (Buffed 4 -> 12)
+              p.takeDamage(12);
+              // No knockback, just burn.
+            }
+          }
         }
       }
 
       // 0. Update Players & Handle Generic Dot/Aura effects
       for (const [id, p] of this.players) {
         if (p.staticFieldActive) {
-          
           // NEW VOLT LOGIC: Spawning Trail Segments (Server Side)
           // We need to track lastTrailPos on player object.
           // Check distance
           const lx = p.lastTrailX || p.x;
           const ly = p.lastTrailY || p.y;
           const dist = Math.hypot(p.x - lx, p.y - ly);
-          
-          if (dist > 10) { // Spawn every 10px (Dense line)
-              this.entities.push({
-                  type: "TRAIL_SEGMENT",
-                  x: p.x,
-                  y: p.y,
-                  ownerId: id,
-                  life: 3000, // Duration
-                  damage: 12,
-                  radius: 15, // Larger Visual (User Request)
-                  color: "#00f3ff" // Electric Blue
-              });
-              p.lastTrailX = p.x;
-              p.lastTrailY = p.y;
+
+          if (dist > 10) {
+            // Spawn every 10px (Dense line)
+            this.entities.push({
+              type: "TRAIL_SEGMENT",
+              x: p.x,
+              y: p.y,
+              ownerId: id,
+              life: 3000, // Duration
+              damage: 12,
+              radius: 15, // Larger Visual (User Request)
+              color: "#00f3ff", // Electric Blue
+            });
+            p.lastTrailX = p.x;
+            p.lastTrailY = p.y;
           }
         }
       }
@@ -896,18 +919,23 @@ class GameServer {
 
         // DECOY COLLISION (User Request)
         for (let j = this.entities.length - 1; j >= 0; j--) {
-           const ent = this.entities[j];
-           if (ent.type === "DECOY" && ent.ownerId !== p.ownerId) {
-             if (Math.hypot(p.x - ent.x, p.y - ent.y) < 30) {
-                 ent.hp -= p.damage;
-                 p.life = 0; // Destroy projectile
-                 this.io.emit("visual_effect", { type: "hit", x: p.x, y: p.y, color: "#fff" });
-                 if (ent.hp <= 0) {
-                     this.entities.splice(j, 1);
-                 }
-                 break;
-             }
-           }
+          const ent = this.entities[j];
+          if (ent.type === "DECOY" && ent.ownerId !== p.ownerId) {
+            if (Math.hypot(p.x - ent.x, p.y - ent.y) < 30) {
+              ent.hp -= p.damage;
+              p.life = 0; // Destroy projectile
+              this.io.emit("visual_effect", {
+                type: "hit",
+                x: p.x,
+                y: p.y,
+                color: "#fff",
+              });
+              if (ent.hp <= 0) {
+                this.entities.splice(j, 1);
+              }
+              break;
+            }
+          }
         }
 
         // FRICTION LOGIC (Techno Mines)
@@ -1158,7 +1186,7 @@ class GameServer {
             if (p.isPoison) {
               damage += 25;
               if (!player.isUnstoppable) {
-                 player.speed = player.baseSpeed * 0.4;
+                player.speed = player.baseSpeed * 0.4;
               }
               player.isPoisoned = true;
 
@@ -1180,27 +1208,27 @@ class GameServer {
 
             // REFLECT DAMAGE (Citadel)
             if (player.reflectDamage && attacker && attacker.id !== player.id) {
-               const reflectDmg = Math.floor(damage * 0.5); // Reflect 50%
-               attacker.takeDamage(reflectDmg);
-               this.io.emit("visual_effect", {
-                  type: "reflect",
-                  targetId: attacker.id,
-                  x: attacker.x,
-                  y: attacker.y
-               });
-               // Prevent full damage to Citadel? 
-               // User asked for "Meilleur", let's say he takes half damage too?
-               damage = Math.floor(damage * 0.5); 
+              const reflectDmg = Math.floor(damage * 0.5); // Reflect 50%
+              attacker.takeDamage(reflectDmg);
+              this.io.emit("visual_effect", {
+                type: "reflect",
+                targetId: attacker.id,
+                x: attacker.x,
+                y: attacker.y,
+              });
+              // Prevent full damage to Citadel?
+              // User asked for "Meilleur", let's say he takes half damage too?
+              damage = Math.floor(damage * 0.5);
             }
 
             player.takeDamage(damage);
 
-             // LIFESTEAL (Brawler)
-             if (attacker && attacker.lifestealActive && !attacker.isDead) {
-                const heal = Math.floor(damage * 0.5); // Heal 50% of damage dealt
-                attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
-                // Visual cleanup? Handled by HUD update
-             }
+            // LIFESTEAL (Brawler)
+            if (attacker && attacker.lifestealActive && !attacker.isDead) {
+              const heal = Math.floor(damage * 0.5); // Heal 50% of damage dealt
+              attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+              // Visual cleanup? Handled by HUD update
+            }
             this.projectiles.splice(i, 1);
 
             // Handle Death

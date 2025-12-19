@@ -1,10 +1,11 @@
 class Player {
-  constructor(id, heroData, username, customColor) {
+  constructor(id, heroData, username, customColor, gameMode = "arena") {
     this.id = id;
     this.hero = heroData; // { id, name, stats: { hp, speed, cooldown } }
     this.heroName = heroData.name;
     this.heroClass = heroData.class;
     this.username = username || "Unknown"; // Store username
+    this.gameMode = gameMode;
     this.x = 400; // Center
     this.y = 300;
     this.hp = heroData.stats.hp;
@@ -24,7 +25,14 @@ class Player {
       this.color = `hsl(${randomHue}, 100%, 50%)`;
     }
 
-    this.keys = { w: false, a: false, s: false, d: false, space: false };
+    this.keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+      space: false,
+      shift: false,
+    };
     this.mouseAngle = 0;
     this.cooldowns = { skill: 0, shoot: 0 };
 
@@ -76,8 +84,6 @@ class Player {
     this.hp += 120; // Heal on pickup
   }
 
-
-
   update(dt) {
     // Regenerate HP
     this.regenerate(dt);
@@ -88,23 +94,29 @@ class Player {
 
     // VOLT: STATIC FIELD DAMAGE
     if (this.staticFieldActive) {
-        if (!this.lastStaticZap) this.lastStaticZap = 0;
-        const now = Date.now();
-        if (now - this.lastStaticZap > 200) { // Zap every 0.2s
-            this.lastStaticZap = now;
-            // The Player class doesn't have access to other players list directly.
-            // We must mark this state for the GameServer to handle, OR return a 'result' from update?
-            // Player.update() usually doesn't return results. 
-            // Better approach: GameServer handles the damage look via a flag, OR we use a flag here.
-            // Wait, I see 'stormActive' logic in GameServer being handled there. 
-            // Let's use the same pattern: 'staticFieldActive' flag is checked in GameServer.
-        }
+      if (!this.lastStaticZap) this.lastStaticZap = 0;
+      const now = Date.now();
+      if (now - this.lastStaticZap > 200) {
+        // Zap every 0.2s
+        this.lastStaticZap = now;
+        // The Player class doesn't have access to other players list directly.
+        // We must mark this state for the GameServer to handle, OR return a 'result' from update?
+        // Player.update() usually doesn't return results.
+        // Better approach: GameServer handles the damage look via a flag, OR we use a flag here.
+        // Wait, I see 'stormActive' logic in GameServer being handled there.
+        // Let's use the same pattern: 'staticFieldActive' flag is checked in GameServer.
+      }
     }
 
     if (this.isRooted) return; // Skip movement
 
     // Basic movement logic
-    const moveStep = this.speed * dt;
+    let moveStep = this.speed * dt;
+
+    // SPRINT (BR Only - User Request)
+    if (this.gameMode === "battle_royale" && this.keys.shift) {
+      moveStep *= 1.4;
+    }
 
     // --- X AXIS MOVEMENT ---
     let dx = 0;
@@ -115,7 +127,6 @@ class Player {
       const nextX = this.x + dx;
       let colX = false;
       if (!this.isPhasing) {
-
         const pRect = { x: nextX - 20, y: this.y - 20, w: 40, h: 40 };
         const obstacles = this.currentMapObstacles || [];
         for (const obs of obstacles) {
@@ -271,7 +282,7 @@ class Player {
       duration = 3000;
       this.shieldActive = true;
       this.hp = Math.min(this.maxHp, this.hp + 100);
-      
+
       // BUFF: SEISMIC SLAM (Immediate AOE)
       result = {
         type: "SEISMIC_SLAM",
@@ -281,7 +292,7 @@ class Player {
         radius: 250,
         damage: 0, // No Damage, only Push (User Request)
         knockback: 400,
-        color: "#ffaa00" // Orange Impact
+        color: "#ffaa00", // Orange Impact
       };
 
       setTimeout(() => {
@@ -296,7 +307,7 @@ class Player {
       this.cooldowns.skill += 6000;
       // PHASE SHIFT: Invulnerability + Super Speed + Phase
       this.speed = this.baseSpeed * 3;
-      this.isPhasing = true; 
+      this.isPhasing = true;
       this.isInvincible = true; // New Buff
       setTimeout(() => {
         this.speed = this.baseSpeed;
@@ -312,35 +323,35 @@ class Player {
       this.staticFieldActive = true; // Handled in update loop
       this.lastTrailX = this.x; // CRITICAL FIX: Initialize for distance check
       this.lastTrailY = this.y;
-      
+
       // Auto-damage logic needs to be in update loop, but for now we set the flag
       setTimeout(() => {
         this.speed = this.baseSpeed;
         this.staticFieldActive = false;
       }, 3000);
     } else if (name === "Ghost") {
-       console.log("[SERVER] Ghost Phasing Triggered");
-       this.cooldowns.skill += 5000;
-       
-       // PHASE SHIFT: Speed + Phasing + Rapid Fire (No Teleport)
-       // "Transparent, tout lui traverse, plus rapide, tire plus vite"
-       
-       this.speed = this.baseSpeed * 1.5; // Speed Boost
-       this.isPhasing = true; // Immunity
-       this.rapidFire = true; // Fast Fire
-       this.isSkillActive = true; // Visuals
+      console.log("[SERVER] Ghost Phasing Triggered");
+      this.cooldowns.skill += 5000;
 
-       setTimeout(() => {
-           this.speed = this.baseSpeed;
-           this.isPhasing = false;
-           this.rapidFire = false;
-           this.isSkillActive = false;
-           this.checkUnstuck(); // Fix: Teleport out of wall if stuck
-       }, 3000); // 3s Duration
+      // PHASE SHIFT: Speed + Phasing + Rapid Fire (No Teleport)
+      // "Transparent, tout lui traverse, plus rapide, tire plus vite"
 
-       // Fear Wave Effect (Optional? User didn't ask to remove, but "tout lui traverse" implies passive. Keeping for impact or remove?)
-       // User said "je veux juste qu'il sois transparent...". I will remove the Fear Wave to be safe and stick to "Juste transparent + buff".
-       result = null; 
+      this.speed = this.baseSpeed * 1.5; // Speed Boost
+      this.isPhasing = true; // Immunity
+      this.rapidFire = true; // Fast Fire
+      this.isSkillActive = true; // Visuals
+
+      setTimeout(() => {
+        this.speed = this.baseSpeed;
+        this.isPhasing = false;
+        this.rapidFire = false;
+        this.isSkillActive = false;
+        this.checkUnstuck(); // Fix: Teleport out of wall if stuck
+      }, 3000); // 3s Duration
+
+      // Fear Wave Effect (Optional? User didn't ask to remove, but "tout lui traverse" implies passive. Keeping for impact or remove?)
+      // User said "je veux juste qu'il sois transparent...". I will remove the Fear Wave to be safe and stick to "Juste transparent + buff".
+      result = null;
     }
 
     // === DAMAGE ===
@@ -352,9 +363,9 @@ class Player {
       this.speed = this.baseSpeed * 1.4; // Added Speed
       this.hasFireTrail = true; // Visual + Mechanic?
       setTimeout(() => {
-         this.rapidFire = false;
-         this.speed = this.baseSpeed;
-         this.hasFireTrail = false;
+        this.rapidFire = false;
+        this.speed = this.baseSpeed;
+        this.hasFireTrail = false;
       }, 3000);
     } else if (name === "Frost") {
       this.cooldowns.skill += 5000;
@@ -417,7 +428,7 @@ class Player {
       this.reflectDamage = true; // BUFF: Thorns
       setTimeout(() => {
         this.isInvincible = false;
-        this.speed = this.baseSpeed; 
+        this.speed = this.baseSpeed;
         this.shieldActive = false;
         this.reflectDamage = false;
       }, 3000);
@@ -476,12 +487,12 @@ class Player {
       }, 4000);
 
       const decoys = [];
-      const spreadRadius = 150; 
+      const spreadRadius = 150;
       const baseAngle = Math.random() * 6.28;
       const angles = [
         baseAngle,
         baseAngle + (Math.PI * 2) / 3,
-        baseAngle + (Math.PI * 4) / 3
+        baseAngle + (Math.PI * 4) / 3,
       ];
 
       const obstacles = this.currentMapObstacles || [];
@@ -497,34 +508,38 @@ class Player {
         const steps = 10;
         let validX = this.x;
         let validY = this.y;
-        
+
         for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            const tx = this.x + (finalX - this.x) * t;
-            const ty = this.y + (finalY - this.y) * t;
-            
-            // 1. Check Bounds
-            if (tx < 50 || tx > mapW - 50 || ty < 50 || ty > mapH - 50) {
-                break; // Stop at last valid
-            }
+          const t = i / steps;
+          const tx = this.x + (finalX - this.x) * t;
+          const ty = this.y + (finalY - this.y) * t;
 
-            // 2. Check Obstacles
-            let hit = false;
-            for (const obs of obstacles) {
-                if (tx > obs.x - 20 && tx < obs.x + obs.w + 20 &&
-                    ty > obs.y - 20 && ty < obs.y + obs.h + 20) {
-                    hit = true;
-                    break;
-                }
-            }
+          // 1. Check Bounds
+          if (tx < 50 || tx > mapW - 50 || ty < 50 || ty > mapH - 50) {
+            break; // Stop at last valid
+          }
 
-            if (hit) break; // Stop at last valid
-            
-            // If safe, update valid pos
-            validX = tx;
-            validY = ty;
+          // 2. Check Obstacles
+          let hit = false;
+          for (const obs of obstacles) {
+            if (
+              tx > obs.x - 20 &&
+              tx < obs.x + obs.w + 20 &&
+              ty > obs.y - 20 &&
+              ty < obs.y + obs.h + 20
+            ) {
+              hit = true;
+              break;
+            }
+          }
+
+          if (hit) break; // Stop at last valid
+
+          // If safe, update valid pos
+          validX = tx;
+          validY = ty;
         }
-        
+
         finalX = validX;
         finalY = validY;
         // -------------------------------------
@@ -547,7 +562,6 @@ class Player {
         });
       }
       result = decoys;
-      
     } else if (name === "Jumper") {
       duration = 500;
       // WARP STRIKE: Teleport + Area Blast
@@ -559,18 +573,18 @@ class Player {
       this.x = Math.max(0, Math.min(2000, targetX));
       this.y = Math.max(0, Math.min(2000, targetY));
       this.checkUnstuck();
-      
+
       this.cooldowns.skill += 3500;
 
       result = {
-          type: "WARP_BLAST",
-          ownerId: this.id,
-          x: this.x,
-          y: this.y,
-          radius: 200,
-          damage: 50,
-          knockback: 600,
-          color: "#00fa9a"
+        type: "WARP_BLAST",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 200,
+        damage: 50,
+        knockback: 600,
+        color: "#00fa9a",
       };
     }
 

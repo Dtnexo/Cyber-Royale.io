@@ -174,7 +174,8 @@ class BattleRoyaleManager {
         socket.id,
         playerData.hero,
         playerData.username,
-        playerData.skinColor
+        playerData.skinColor,
+        "battle_royale"
       );
 
       // Assign Spawn

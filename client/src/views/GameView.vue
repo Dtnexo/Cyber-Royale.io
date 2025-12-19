@@ -520,7 +520,6 @@ onMounted(async () => {
   window.addEventListener("keydown", handleKey);
   window.addEventListener("keyup", handleKey);
   window.addEventListener("mousemove", handleMouse);
-  window.addEventListener("keypress", handleSkill);
   window.addEventListener("resize", handleResize);
 
   const ctx = canvasRef.value.getContext("2d");
@@ -597,29 +596,41 @@ onUnmounted(() => {
     // We keep the socket itself alive
   }
   window.removeEventListener("mousemove", handleMouse);
-  window.removeEventListener("keypress", handleSkill);
   window.removeEventListener("resize", handleResize);
   cancelAnimationFrame(animationId);
 });
 
 const handleKey = (e) => {
-  if (["w", "a", "s", "d"].includes(e.key.toLowerCase())) {
-    keys[e.key.toLowerCase()] = e.type === "keydown";
+  const key = e.key.toLowerCase();
+  if (["w", "a", "s", "d"].includes(key)) {
+    keys[key] = e.type === "keydown";
   }
   if (e.code === "Space") {
     keys.space = e.type === "keydown";
   }
+  if (e.key === "Shift") {
+    keys.shift = e.type === "keydown";
+  }
+
+  // TRIGGER SKILL ON E KEYDOWN
+  if (key === "e" && e.type === "keydown") {
+    socket.value.emit("skill_trigger");
+  }
 };
 
 const handleMouse = (e) => {
-  // Calculate angle relative to center of screen (since camera follows player)
-  const centerX = window.innerWidth / 2;
-  const centerY = window.innerHeight / 2;
-  mouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
-};
-
-const handleSkill = (e) => {
-  if (e.key.toLowerCase() === "e") socket.value.emit("skill_trigger");
+  // FIND ME to calculate accurate screen position (Prevents aiming offset during camera smoothing)
+  const me = players.find((p) => p.id === myId);
+  if (me) {
+    const screenX = me.x - cameraX;
+    const screenY = me.y - cameraY;
+    mouseAngle = Math.atan2(e.clientY - screenY, e.clientX - screenX);
+  } else {
+    // Fallback if local player state is not yet received
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    mouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
+  }
 };
 
 // --- MOBILE CONTROLS ---
