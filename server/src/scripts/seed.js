@@ -215,7 +215,7 @@ async function seed() {
           { name: "Default", value: "#4682b4" },
           { name: "Thunder", value: "#ffff00" },
         ],
-        stats: { hp: 110, speed: 115, cooldown: 6000 },
+        stats: { hp: 100, speed: 115, cooldown: 8000 },
       },
       {
         id: 19,

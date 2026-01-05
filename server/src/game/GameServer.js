@@ -556,8 +556,12 @@ class GameServer {
 
       // 1. Update Players & Handle Shooting
       this.players.forEach((player) => {
-        // SAFEGUARD: Force Visibility for non-stealth heroes (Fix for "New Heroes invisible on kill")
-        if (player.hero.name !== "Mirage" && player.hero.name !== "Shadow") {
+        // SAFEGUARD: Force Visibility for non-stealth heroes (unless spawn protected)
+        if (
+          player.hero.name !== "Mirage" &&
+          player.hero.name !== "Shadow" &&
+          !player.isSpawnProtected
+        ) {
           player.isInvisible = false;
         }
         // SAFEGUARD: NaN HP check
@@ -577,7 +581,16 @@ class GameServer {
             player.cooldowns.shoot = 0;
             player.freezeEndTime = 0;
             player.isFrozen = false;
-            player.isInvisible = false; // Fix for respawn invisibility bug
+            player.isFrozen = false;
+
+            // SPAWN PROTECTION (Invisibility)
+            player.isInvisible = true;
+            player.isSpawnProtected = true;
+            setTimeout(() => {
+              player.isInvisible = false;
+              player.isSpawnProtected = false;
+            }, 3000); // 3 Seconds Invisibility
+
             player.killedBy = null;
             player.killedByHero = null;
           } else {
@@ -766,13 +779,13 @@ class GameServer {
         if (player.stormActive) {
           if (!player.lastStormZap) player.lastStormZap = 0;
           const now = Date.now();
-          if (now - player.lastStormZap >= 100) {
-            // Fast Tick (0.1s)
+          if (now - player.lastStormZap >= 250) {
+            // Faster Tick (0.25s) - Fine-tuned Speed (User Request)
             player.lastStormZap = now;
 
             // Find ALL enemies in range
             const targets = [];
-            const range = 300;
+            const range = 150; // Smaller Circle (User Request)
 
             for (const [tid, target] of this.players) {
               if (tid === player.id || target.isDead || target.isPhasing)
