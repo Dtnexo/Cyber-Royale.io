@@ -35,6 +35,7 @@ router.put("/update", auth, async (req, res) => {
         email: user.email,
         isAdmin: user.isAdmin,
         coins: user.coins,
+        requiresReset: user.requiresReset, // Critical for frontend state update
       },
     });
   } catch (err) {
@@ -71,6 +72,7 @@ router.get("/me", auth, async (req, res) => {
       email: user.email,
       isAdmin: user.isAdmin,
       coins: user.coins,
+      requiresReset: user.requiresReset,
       unlockedHeroes: unlockedIds,
     });
   } catch (err) {

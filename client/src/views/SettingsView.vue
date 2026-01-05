@@ -98,11 +98,15 @@ const handleSave = async () => {
 
         <div class="action-buttons">
           <button
+            v-if="!auth.user?.requiresReset"
             @click="router.push('/dashboard')"
             class="btn btn-secondary back-btn"
           >
             CANCEL // RETURN
           </button>
+          <div v-else class="mandatory-notice">
+            ⚠️ MANDATORY SECURITY UPDATE
+          </div>
           <button
             @click="handleSave"
             class="btn btn-primary save-btn"

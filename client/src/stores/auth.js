@@ -35,7 +35,12 @@ export const useAuthStore = defineStore("auth", {
         this.token = res.data.token;
         this.user = res.data.user;
         localStorage.setItem("token", this.token);
-        router.push("/dashboard");
+
+        if (this.user.requiresReset) {
+          router.push("/force-reset");
+        } else {
+          router.push("/dashboard");
+        }
       } catch (err) {
         this.error = err.response?.data?.message || "Login failed";
       }
