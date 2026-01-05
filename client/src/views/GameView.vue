@@ -53,6 +53,15 @@ const queueTimerVal = ref(0);
 const countdownVal = ref(0);
 const showCountdown = ref(false);
 const spectatingId = ref(null);
+const isSpectating = ref(false);
+const showBRDeathScreen = ref(false);
+const brDeathInfo = ref({
+  rank: 0,
+  total: 0,
+  killedBy: "",
+  killedByHero: "",
+  killerId: null,
+});
 const myRank = ref(0);
 const earnedCoins = ref(0);
 const winnerName = ref("");
@@ -78,6 +87,20 @@ const sendChatMessage = () => {
   if (!chatInput.value.trim() || !socket.value) return;
   socket.value.emit("chat_message", chatInput.value.trim());
   chatInput.value = "";
+};
+
+const startSpectate = () => {
+  if (!socket.value) return;
+  socket.value.emit("spectate_request");
+};
+
+const playAgain = () => {
+  if (!socket.value) return;
+  socket.value.emit("play_again");
+  showBRDeathScreen.value = false;
+  isSpectating.value = false;
+  spectatingId.value = null;
+  isDead.value = false;
 };
 
 const addScreenShake = (intensity, duration) => {
@@ -474,10 +497,30 @@ onMounted(async () => {
     if (data.killedBy) killedBy.value = data.killedBy;
     if (data.killedByHero) killedByHero.value = data.killedByHero;
 
+    // Show BR Death Screen
+    showBRDeathScreen.value = true;
+    brDeathInfo.value = {
+      rank: data.rank,
+      total: data.total,
+      killedBy: data.killedBy || "Unknown",
+      killedByHero: data.killedByHero || "Unknown",
+      killerId: data.killerId,
+    };
+
     // Auto Spectate Killer
     if (data.killerId) {
       spectatingId.value = data.killerId;
     }
+  });
+
+  socket.value.on("spectate_start", (data) => {
+    isSpectating.value = true;
+    spectatingId.value = data.targetId;
+    showBRDeathScreen.value = false;
+  });
+
+  socket.value.on("spectate_failed", (message) => {
+    console.error("Spectate failed:", message);
   });
 
   socket.value.on("br_game_over", (data) => {
@@ -3055,6 +3098,29 @@ if (canvasRef.value) {
       </button>
     </div>
 
+    <!-- BR DEATH SCREEN -->
+    <div v-if="showBRDeathScreen" class="death-overlay">
+      <div class="death-content">
+        <h1>ELIMINATED</h1>
+        <p class="rank">
+          RANK: {{ brDeathInfo.rank }} / {{ brDeathInfo.total }}
+        </p>
+        <p class="killer">
+          KILLED BY: {{ brDeathInfo.killedBy }} ({{ brDeathInfo.killedByHero }})
+        </p>
+        <div v-if="earnedCoins > 0" class="coins-earned">
+          +{{ earnedCoins }} COINS
+        </div>
+
+        <div class="death-actions">
+          <button @click="startSpectate" class="btn-spectate">
+            👁️ SPECTATE
+          </button>
+          <button @click="playAgain" class="btn-return">🔄 PLAY AGAIN</button>
+        </div>
+      </div>
+    </div>
+
     <!-- DEATH SCREEN / SPECTATOR -->
     <div
       class="respawn-overlay death-anim"
@@ -3879,6 +3945,73 @@ if (canvasRef.value) {
   width: 100%; /* Full width */
   gap: 15px; /* Spacing between #, Rank, Total */
   text-align: center;
+}
+
+.rank-hash {
+  font-size: 3rem;
+  color: rgba(255, 215, 0, 0.5);
+}
+
+/* BR DEATH SCREEN STYLES */
+.death-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.5s;
+}
+
+.death-content {
+  text-align: center;
+  color: #fff;
+  padding: 40px;
+  background: rgba(20, 0, 0, 0.8);
+  border: 2px solid #ff3333;
+  border-radius: 15px;
+  box-shadow: 0 0 30px rgba(255, 51, 51, 0.5);
+}
+
+.death-content h1 {
+  font-size: 4rem;
+  color: #ff3333;
+  text-shadow: 0 0 20px #ff3333;
+  margin-bottom: 20px;
+  letter-spacing: 10px;
+}
+
+.death-content .rank {
+  font-size: 2rem;
+  color: #ffd700;
+  margin: 15px 0;
+  text-shadow: 0 0 10px #ffd700;
+}
+
+.death-content .killer {
+  font-size: 1.5rem;
+  color: #00f3ff;
+  margin: 15px 0;
+  letter-spacing: 2px;
+}
+
+.coins-earned {
+  font-size: 2rem;
+  color: #ffd700;
+  margin: 20px 0;
+  text-shadow: 0 0 15px #ffd700;
+  font-weight: bold;
+}
+
+.death-actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 30px;
+  justify-content: center;
 }
 
 .rank-hash {
