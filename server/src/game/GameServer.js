@@ -583,13 +583,13 @@ class GameServer {
             player.isFrozen = false;
             player.isFrozen = false;
 
-            // SPAWN PROTECTION (Invisibility)
-            player.isInvisible = true;
+            // SPAWN PROTECTION (Invincibility)
+            player.isInvincible = true;
             player.isSpawnProtected = true;
             setTimeout(() => {
-              player.isInvisible = false;
+              player.isInvincible = false;
               player.isSpawnProtected = false;
-            }, 3000); // 3 Seconds Invisibility
+            }, 3000); // 3 Seconds Invincibility
 
             player.killedBy = null;
             player.killedByHero = null;
@@ -785,7 +785,7 @@ class GameServer {
 
             // Find ALL enemies in range
             const targets = [];
-            const range = 150; // Smaller Circle (User Request)
+            const range = 250; // Radius 250 (User Request)
 
             for (const [tid, target] of this.players) {
               if (tid === player.id || target.isDead || target.isPhasing)
@@ -850,6 +850,7 @@ class GameServer {
           angle: player.mouseAngle,
           shield: player.shieldActive,
           invisible: player.isInvisible, // Send stealth state
+          isInvincible: player.isInvincible, // Send Invincible State (Spawn/Citadel)
           isFrozen: player.isFrozen, // Send frozen state
           isPhasing: player.isPhasing,
           rapidFire: player.rapidFire,

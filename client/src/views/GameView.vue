@@ -1638,6 +1638,28 @@ const drawPlayer = (ctx, p) => {
 
   ctx.save();
 
+  // INVINCIBILITY VISUAL (Spawn Protection / Citadel)
+  if (p.isInvincible) {
+    // Pulsing Shield Effect
+    const time = Date.now();
+    const pulse = Math.sin(time / 100) * 3; // Fast pulse
+
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#FFD700"; // Gold Glow
+    ctx.strokeStyle = `rgba(255, 215, 0, ${0.5 + Math.sin(time / 200) * 0.3})`; // Flashing Gold
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, 30 + pulse, 0, Math.PI * 2); // Slightly larger than player
+    ctx.stroke();
+
+    // Inner fill (faint)
+    ctx.fillStyle = "rgba(255, 215, 0, 0.1)";
+    ctx.fill();
+
+    ctx.shadowBlur = 0; // Reset
+  }
+
   // Stealth Handler
   if (p.invisible) {
     // TRUE INVISIBILITY: No Flashing Reveal (Prevents "Skeleton" Glitch)
@@ -1717,7 +1739,7 @@ const drawPlayer = (ctx, p) => {
   // Improved Visibility & Robust Check
   if (p.isSkillActive && heroName === "Storm") {
     ctx.save();
-    const radius = 300; // Reduced to 300
+    const radius = 250; // Sync with Server (Radius 250)
     const time = Date.now() / 1000;
 
     // Remove Player Rotation (Stable Zone)
