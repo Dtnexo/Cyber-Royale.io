@@ -9,8 +9,8 @@ async function seed() {
     // Cleanup removed heroes (Fix for user request)
     await Hero.destroy({
       where: {
-        name: ["Guardian", "Revenant", "Crusher", "Aegis"]
-      }
+        name: ["Guardian", "Revenant", "Crusher", "Aegis"],
+      },
     });
 
     // Ensure Heroes table is updated with new prices
@@ -191,9 +191,9 @@ async function seed() {
         class: "Tank",
         skins: [
           { name: "Default", value: "#708090" },
-          { name: "Fortress", value: "#2f4f4f" }
+          { name: "Fortress", value: "#2f4f4f" },
         ],
-        stats: { hp: 350, speed: 50, cooldown: 10000 }
+        stats: { hp: 350, speed: 50, cooldown: 10000 },
       },
       {
         id: 17,
@@ -202,9 +202,9 @@ async function seed() {
         class: "Tank",
         skins: [
           { name: "Default", value: "#ff4500" },
-          { name: "Obsidian", value: "#3b3b3b" }
+          { name: "Obsidian", value: "#3b3b3b" },
         ],
-        stats: { hp: 260, speed: 80, cooldown: 8000 }
+        stats: { hp: 260, speed: 80, cooldown: 8000 },
       },
       {
         id: 18,
@@ -213,9 +213,9 @@ async function seed() {
         class: "Damage",
         skins: [
           { name: "Default", value: "#4682b4" },
-          { name: "Thunder", value: "#ffff00" }
+          { name: "Thunder", value: "#ffff00" },
         ],
-        stats: { hp: 110, speed: 115, cooldown: 6000 }
+        stats: { hp: 110, speed: 115, cooldown: 6000 },
       },
       {
         id: 19,
@@ -224,9 +224,9 @@ async function seed() {
         class: "Damage",
         skins: [
           { name: "Default", value: "#32cd32" },
-          { name: "Cobra", value: "#006400" }
+          { name: "Cobra", value: "#006400" },
         ],
-        stats: { hp: 105, speed: 120, cooldown: 5000 }
+        stats: { hp: 105, speed: 120, cooldown: 5000 },
       },
       {
         id: 20,
@@ -235,9 +235,9 @@ async function seed() {
         class: "Speed",
         skins: [
           { name: "Default", value: "#9370db" },
-          { name: "Illusion", value: "#e6e6fa" }
+          { name: "Illusion", value: "#e6e6fa" },
         ],
-        stats: { hp: 125, speed: 170, cooldown: 5000 }
+        stats: { hp: 125, speed: 170, cooldown: 5000 },
       },
       {
         id: 21,
@@ -246,10 +246,10 @@ async function seed() {
         class: "Speed",
         skins: [
           { name: "Default", value: "#00fa9a" },
-          { name: "Quantum", value: "#48d1cc" }
+          { name: "Quantum", value: "#48d1cc" },
         ],
-        stats: { hp: 120, speed: 175, cooldown: 4000 }
-      }
+        stats: { hp: 120, speed: 175, cooldown: 4000 },
+      },
     ];
 
     await Hero.bulkCreate(heroes, {
@@ -266,23 +266,22 @@ async function seed() {
       where: { username: adminUsername },
     });
     if (!existingAdmin) {
-      const hashedPassword = await bcrypt.hash(adminPassword, 10);
       await User.create({
         username: adminUsername,
         email: adminEmail,
-        password: hashedPassword,
+        password: adminPassword, // Let User model hook handle hashing
         isAdmin: true,
         coins: 999999, // Admin perk
       });
       console.log("Admin user created: " + adminUsername);
     } else {
       // Ensure admin rights
-      const hashedPassword = await bcrypt.hash(adminPassword, 10);
       existingAdmin.isAdmin = true;
       existingAdmin.coins = 999999;
-      existingAdmin.password = hashedPassword;
+      // DO NOT reset password here, as it breaks user changes
+      // existingAdmin.password = adminPassword;
       await existingAdmin.save();
-      console.log("Admin user updated (Password reset).");
+      console.log("Admin user updated (Flags only).");
     }
     // -----------------------
 

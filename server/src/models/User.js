@@ -52,6 +52,9 @@ User.beforeCreate(async (user) => {
 
 User.beforeUpdate(async (user) => {
   if (user.changed("password")) {
+    console.log(
+      `[SECURITY] Password change detected for user ${user.username} (ID: ${user.id}). Re-hashing...`
+    );
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(user.password, salt);
   }
