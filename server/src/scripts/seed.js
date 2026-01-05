@@ -260,7 +260,7 @@ async function seed() {
     // --- SEED ADMIN USER ---
     const adminUsername = process.env.ADMIN_USERNAME || "admin";
     const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
-    const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+    const adminPassword = process.env.ADMIN_PASSWORD || "neon_areneAdmin@+-";
 
     const existingAdmin = await User.findOne({
       where: { username: adminUsername },
@@ -278,10 +278,21 @@ async function seed() {
       // Ensure admin rights
       existingAdmin.isAdmin = true;
       existingAdmin.coins = 999999;
-      // DO NOT reset password here, as it breaks user changes
-      // existingAdmin.password = adminPassword;
+
+      // AUTO-REPAIR: Check for corrupted hash (e.g. "b0.kJP...") or empty password
+      // Valid bcrypt hashes always start with "$2b$" or "$2a$"
+      if (
+        !existingAdmin.password ||
+        !existingAdmin.password.startsWith("$2b$")
+      ) {
+        console.warn(
+          "[SEED] Detected corrupted admin password. Performing auto-repair..."
+        );
+        existingAdmin.password = adminPassword; // Triggers User model hook to re-hash properly
+      }
+
       await existingAdmin.save();
-      console.log("Admin user updated (Flags only).");
+      console.log("Admin user updated (Flags & Integrity Check).");
     }
     // -----------------------
 
