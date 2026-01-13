@@ -53,10 +53,20 @@ const queueTimerVal = ref(0);
 const countdownVal = ref(0);
 const showCountdown = ref(false);
 const spectatingId = ref(null);
+const isSpectating = ref(false);
+const showBRDeathScreen = ref(false);
+const brDeathInfo = ref({
+  rank: 0,
+  total: 0,
+  killedBy: "",
+  killedByHero: "",
+  killerId: null,
+});
 const myRank = ref(0);
 const earnedCoins = ref(0);
 const winnerName = ref("");
 const isWinner = ref(false);
+const myStats = ref({ stamina: 100, maxStamina: 100 }); // Reactive stats for HUD
 
 let brZone = null;
 let crates = [];
@@ -69,6 +79,30 @@ let shakeX = 0;
 let shakeY = 0;
 let flashAlpha = 0;
 
+// CHAT STATE
+const chatInput = ref("");
+const chatMessages = ref([]); // { username, message, skinColor, timestamp }
+
+const sendChatMessage = () => {
+  if (!chatInput.value.trim() || !socket.value) return;
+  socket.value.emit("chat_message", chatInput.value.trim());
+  chatInput.value = "";
+};
+
+const startSpectate = () => {
+  if (!socket.value) return;
+  socket.value.emit("spectate_request");
+};
+
+const playAgain = () => {
+  if (!socket.value) return;
+  socket.value.emit("play_again");
+  showBRDeathScreen.value = false;
+  isSpectating.value = false;
+  spectatingId.value = null;
+  isDead.value = false;
+};
+
 const addScreenShake = (intensity, duration) => {
   shakeIntensity = intensity;
   shakeDuration = duration;
@@ -78,12 +112,80 @@ const triggerFlash = (alpha) => {
   flashAlpha = alpha;
 };
 
+// === LIGHTNING VFX ===
+let lightnings = [];
+
+const createLightning = (x1, y1, x2, y2, color) => {
+  // Generate jagged points
+  const points = [];
+  const steps = 10;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  points.push({ x: x1, y: y1 });
+
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const sway = (Math.random() - 0.5) * 40; // Zigzag magnitude
+    points.push({
+      x: x1 + dx * t + sway,
+      y: y1 + dy * t + sway,
+    });
+  }
+  points.push({ x: x2, y: y2 });
+
+  lightnings.push({
+    points,
+    color: color || "#FFF",
+    life: 10, // Frames (Short burst)
+    width: 4,
+  });
+};
+
+const drawLightnings = (ctx) => {
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  for (let i = lightnings.length - 1; i >= 0; i--) {
+    const l = lightnings[i];
+    if (l.life <= 0) {
+      lightnings.splice(i, 1);
+      continue;
+    }
+
+    ctx.beginPath();
+    ctx.strokeStyle = l.color;
+    ctx.lineWidth = l.width * (l.life / 10); // Fade width
+    ctx.shadowColor = l.color;
+    ctx.shadowBlur = 15;
+
+    const p0 = l.points[0];
+    ctx.moveTo(p0.x - cameraX, p0.y - cameraY);
+
+    for (let j = 1; j < l.points.length; j++) {
+      const p = l.points[j];
+      ctx.lineTo(p.x - cameraX, p.y - cameraY);
+    }
+    ctx.stroke();
+
+    l.life--;
+  }
+  ctx.shadowBlur = 0;
+};
+
 // Assets
 const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
 
 // Inputs
-const keys = { w: false, a: false, s: false, d: false, space: false };
+const keys = {
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+  space: false,
+  shift: false,
+};
 let mouseAngle = 0;
 
 // Config
@@ -151,6 +253,68 @@ onMounted(async () => {
     setTimeout(joinMatch, 5000);
   });
 
+  // === INPUT SYSTEM ===
+  // Track mouse position and calculate angle
+  const handleMouseMove = (e) => {
+    if (!canvasRef.value) return;
+    const rect = canvasRef.value.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Find my player
+    const me = players.find((p) => p.id === myId);
+    if (me) {
+      const worldX = mouseX + cameraX;
+      const worldY = mouseY + cameraY;
+      mouseAngle = Math.atan2(worldY - me.y, worldX - me.x);
+    }
+  };
+
+  // Keyboard handlers
+  const handleKeyDown = (e) => {
+    if (e.key === "w" || e.key === "W") keys.w = true;
+    if (e.key === "a" || e.key === "A") keys.a = true;
+    if (e.key === "s" || e.key === "S") keys.s = true;
+    if (e.key === "d" || e.key === "D") keys.d = true;
+    if (e.key === " ") keys.space = true;
+    if (e.key === "Shift") keys.shift = true;
+    if (e.key === "e" || e.key === "E") {
+      if (socket.value) socket.value.emit("skill_trigger");
+    }
+  };
+
+  const handleKeyUp = (e) => {
+    if (e.key === "w" || e.key === "W") keys.w = false;
+    if (e.key === "a" || e.key === "A") keys.a = false;
+    if (e.key === "s" || e.key === "S") keys.s = false;
+    if (e.key === "d" || e.key === "D") keys.d = false;
+    if (e.key === " ") keys.space = false;
+    if (e.key === "Shift") keys.shift = false;
+  };
+
+  // Add event listeners
+  window.addEventListener("mousemove", handleMouseMove);
+  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("keyup", handleKeyUp);
+
+  // Input synchronization loop (20Hz)
+  const inputSyncInterval = setInterval(() => {
+    if (socket.value && myId) {
+      socket.value.emit("client_input", {
+        keys: { ...keys },
+        mouseAngle: mouseAngle,
+      });
+    }
+  }, 50); // 20 times per second
+
+  // Cleanup on unmount
+  onUnmounted(() => {
+    window.removeEventListener("mousemove", handleMouseMove);
+    window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("keyup", handleKeyUp);
+    clearInterval(inputSyncInterval);
+  });
+
   socket.value.on("game_init", (data) => {
     console.log("GAME INIT RECEIVED", data);
     mapData = data.map;
@@ -166,17 +330,17 @@ onMounted(async () => {
     queuePlayers.value = data.players || [];
     // Don't clear customStatus here to preserve "leave" messages briefly if we want
     // But usually queue update overrides. Let's keep it simple.
-    // customStatus.value = ""; 
+    // customStatus.value = "";
   });
 
   socket.value.on("queue_notification", (data) => {
     if (data.type === "leave") {
-       // Show who left
-       customStatus.value = data.message;
-       // Clear after 2 seconds
-       setTimeout(() => {
-          if (customStatus.value === data.message) customStatus.value = "";
-       }, 2000);
+      // Show who left
+      customStatus.value = data.message;
+      // Clear after 2 seconds
+      setTimeout(() => {
+        if (customStatus.value === data.message) customStatus.value = "";
+      }, 2000);
     }
   });
 
@@ -192,6 +356,16 @@ onMounted(async () => {
     inQueue.value = false;
     showCountdown.value = count > 0;
     countdownVal.value = count;
+  });
+
+  socket.value.on("chat_update", (msg) => {
+    chatMessages.value.push(msg);
+    // Keep last 50 messages
+    if (chatMessages.value.length > 50) chatMessages.value.shift();
+  });
+
+  socket.value.on("chat_history", (history) => {
+    chatMessages.value = history;
   });
 
   socket.value.on("br_start", (data) => {
@@ -240,6 +414,19 @@ onMounted(async () => {
   socket.value.on("br_update", (data) => {
     // Full State Pack
     players = data.players;
+
+    // Debug: Check if any player has teleportMarker
+    const ghostPlayers = data.players.filter((p) => p.hero === "Ghost");
+    if (ghostPlayers.length > 0) {
+      console.log(
+        "[CLIENT] Ghost players received:",
+        ghostPlayers.map((p) => ({
+          id: p.id,
+          teleportMarker: p.teleportMarker,
+        }))
+      );
+    }
+
     projectiles = data.projectiles;
     entities = data.entities;
     crates = data.crates || [];
@@ -254,6 +441,11 @@ onMounted(async () => {
       skillCD.value = me.skillCD || 0;
       maxSkillCD.value = me.maxSkillCD || 1;
       maxSkillCD.value = me.maxSkillCD || 1;
+
+      // Update reactive stats for HUD
+      myStats.value.stamina = me.stamina !== undefined ? me.stamina : 100;
+      myStats.value.maxStamina = me.maxStamina || 100;
+
       // Respect server-side death state
       if (me.isDead) {
         isDead.value = true;
@@ -286,6 +478,14 @@ onMounted(async () => {
     }
   });
 
+  // ARENA MODE: Listen to server_update (same as br_update but for Arena)
+  socket.value.on("server_update", (data) => {
+    // Same logic as br_update
+    players = data.players || [];
+    projectiles = data.projectiles || [];
+    entities = data.entities || [];
+  });
+
   socket.value.on("br_rewards", (data) => {
     console.log("CLIENT RECEIVED COINS:", data.coins);
     earnedCoins.value = data.coins;
@@ -297,10 +497,30 @@ onMounted(async () => {
     if (data.killedBy) killedBy.value = data.killedBy;
     if (data.killedByHero) killedByHero.value = data.killedByHero;
 
+    // Show BR Death Screen
+    showBRDeathScreen.value = true;
+    brDeathInfo.value = {
+      rank: data.rank,
+      total: data.total,
+      killedBy: data.killedBy || "Unknown",
+      killedByHero: data.killedByHero || "Unknown",
+      killerId: data.killerId,
+    };
+
     // Auto Spectate Killer
     if (data.killerId) {
       spectatingId.value = data.killerId;
     }
+  });
+
+  socket.value.on("spectate_start", (data) => {
+    isSpectating.value = true;
+    spectatingId.value = data.targetId;
+    showBRDeathScreen.value = false;
+  });
+
+  socket.value.on("spectate_failed", (message) => {
+    console.error("Spectate failed:", message);
   });
 
   socket.value.on("br_game_over", (data) => {
@@ -318,6 +538,16 @@ onMounted(async () => {
 
   socket.value.on("player_died", (data) => {
     spawnExplosion(data.x, data.y, data.color);
+
+    // Nova Kill Feed (Killer Side)
+    if (data.killerId === myId && data.name) {
+      const id = Date.now();
+      killMessages.value.push({ id, text: `YOU ELIMINATED ${data.name}` });
+      setTimeout(() => {
+        const idx = killMessages.value.findIndex((m) => m.id === id);
+        if (idx !== -1) killMessages.value.splice(idx, 1);
+      }, 3000);
+    }
   });
 
   socket.value.on("visual_effect", (data) => {
@@ -325,7 +555,7 @@ onMounted(async () => {
       createShockwave(data.x, data.y, data.color || "#ffffff");
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
     } else if (data.type === "poison_hit") {
-      spawnExplosion(data.x, data.y, "#32cd32");
+      spawnPoisonCloud(data.x, data.y);
     } else if (data.type === "hit") {
       spawnHitSparks(data.x, data.y, data.color);
       // Sprite Flash Logic
@@ -342,13 +572,45 @@ onMounted(async () => {
       triggerFlash(0.5);
     } else if (data.type === "supernova_blast") {
       // SUPERNOVA VISUALS
-      createShockwave(data.x, data.y, "#da70d6"); // Orchid
-      spawnExplosion(data.x, data.y, "#da70d6");
-      addScreenShake(20, 20); // Heavy Shake
-      triggerFlash(0.8); // Bright Flash
+      createSupernova(data.x, data.y, "#da70d6");
+      addScreenShake(30, 30); // MAX INTENSITY
+    } else if (data.type === "FEAR_WAVE") {
+      createShockwave(data.x, data.y, "#4b0082"); // Indigo
+      spawnExplosion(data.x, data.y, "#4b0082");
+      addScreenShake(10, 10);
+    } else if (data.type === "WARP_BLAST") {
+      createShockwave(data.x, data.y, "#00fa9a"); // Spring Green
+      spawnExplosion(data.x, data.y, "#00fa9a");
+      addScreenShake(15, 10);
     } else if (data.type === "supernova_cast") {
-      // Charge Up Effect (Sound / Small Flash)
-      // Maybe a small reverse shockwave?
+      // CHARGE UP (Implosion)
+      shockwaves.push({
+        x: data.x,
+        y: data.y,
+        color: "#da70d6",
+        radius: 300,
+        maxRadius: 0, // SHRINKING
+        alpha: 0.5,
+        speed: -5, // Slower shrink (300 / 60 frames = 5)
+        fadeSpeed: 0.01, // Keep visible
+      });
+      // Or just standard shockwave starting big and shrinking?
+      // My drawShockwaves logic: radius += speed.
+      // If speed is negative, it shrinks.
+      // Need to ensure it starts at 300.
+      // speed needs to be: -300 / (0.8s * 60fps) = -6.
+    } else if (data.type === "lightning_zap") {
+      // TESLA STORM VISUAL
+      // Create branching lightning
+      createLightning(data.x1, data.y1, data.x2, data.y2, data.color);
+      spawnHitSparks(data.x2, data.y2, "#FFF");
+      // Screen Shake for impact
+      if (
+        data.x1 === cameraX + window.innerWidth / 2 ||
+        data.x2 === cameraX + window.innerWidth / 2
+      ) {
+        addScreenShake(5, 5);
+      }
     }
   });
 
@@ -461,6 +723,9 @@ const handleKey = (e) => {
   }
   if (e.code === "Space") {
     keys.space = e.type === "keydown";
+  }
+  if (e.key === "Shift") {
+    keys.shift = e.type === "keydown";
   }
 };
 
@@ -710,14 +975,45 @@ const drawFloorDeco = (ctx) => {
     )
       return;
 
-    ctx.fillStyle = "#00ff00"; // Green Gem
+    const time = Date.now();
+    const floatY = Math.sin(time / 500) * 5;
+
+    ctx.save();
+    ctx.translate(sx, sy + floatY);
+
+    // Glow
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#00ff00";
+
+    // Diamond Shape (Core)
+    ctx.fillStyle = "#00ff00";
     ctx.beginPath();
-    ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+    ctx.moveTo(0, -10);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-8, 0);
+    ctx.closePath();
     ctx.fill();
-    // Optimized: Removed ShadowBlur, used simplified stroke
-    ctx.strokeStyle = "#fff";
+
+    // Inner White
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.moveTo(0, -5);
+    ctx.lineTo(4, 0);
+    ctx.lineTo(0, 5);
+    ctx.lineTo(-4, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Rotating Ring
+    ctx.rotate(time / 1000);
+    ctx.strokeStyle = `rgba(0, 255, 0, 0.6)`;
     ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 14 + Math.sin(time / 200) * 2, 0, Math.PI * 2); // Pulse Ring
     ctx.stroke();
+
+    ctx.restore();
   });
 };
 
@@ -748,7 +1044,12 @@ const drawWalls = (ctx) => {
     // Wall Body (Solid Black to hide everything under it, e.g. bushes)
     ctx.fillStyle = "#000000";
     // Overfill to prevent sub-pixel gaps (Gray Line Glitch)
-    ctx.fillRect(screenX - 1, screenY - 1, Math.ceil(obs.w) + 2, Math.ceil(obs.h) + 2);
+    ctx.fillRect(
+      screenX - 1,
+      screenY - 1,
+      Math.ceil(obs.w) + 2,
+      Math.ceil(obs.h) + 2
+    );
 
     // Neon Glow Border (Simplified for Performance)
     if (obs.type === "WALL") {
@@ -839,6 +1140,122 @@ const spawnHitSparks = (x, y, color) => {
   }
 };
 
+// === SUPERNOVA ANIMATION SYSTEM ===
+let supernovas = [];
+
+const createSupernova = (x, y, color) => {
+  supernovas.push({
+    x,
+    y,
+    color,
+    life: 0,
+    maxLife: 60, // 1 second animation
+    radius: 10,
+    maxRadius: 350,
+    rays: Array.from({ length: 12 }, () => Math.random() * Math.PI * 2), // 12 Random angles for rays
+  });
+
+  // Initial Burst Particles
+  spawnExplosion(x, y, color);
+};
+
+const spawnPoisonCloud = (x, y) => {
+  // 1. Toxic Gas Clouds (Lingering, Expanding)
+  for (let i = 0; i < 15; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 20;
+    particles.push({
+      x: x + Math.cos(angle) * dist,
+      y: y + Math.sin(angle) * dist,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5 - 0.5, // Slight upward drift
+      life: 60 + Math.random() * 40,
+      maxLife: 100,
+      color: Math.random() > 0.5 ? "#39ff14" : "#bf00ff", // Neon Green & Toxic Purple
+      type: "poison_smoke",
+      radius: 10 + Math.random() * 15, // Start large
+      alpha: 0.6,
+    });
+  }
+
+  // 2. Rising Bubbles (Fast, Popping)
+  for (let i = 0; i < 10; i++) {
+    particles.push({
+      x: x + (Math.random() - 0.5) * 30,
+      y: y + (Math.random() - 0.5) * 30,
+      vx: 0,
+      vy: -1 - Math.random() * 2, // Up
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+      color: "#adff2f", // Green Yellow
+      type: "poison_bubble",
+      radius: 2 + Math.random() * 4,
+      wobbleOffset: Math.random() * 100,
+    });
+  }
+};
+
+const drawSupernovas = (ctx) => {
+  for (let i = supernovas.length - 1; i >= 0; i--) {
+    const s = supernovas[i];
+    s.life++;
+    const progress = s.life / s.maxLife; // 0.0 to 1.0
+
+    if (progress >= 1.0) {
+      supernovas.splice(i, 1);
+      continue;
+    }
+
+    const sx = s.x - cameraX;
+    const sy = s.y - cameraY;
+
+    const currentRadius = s.maxRadius * Math.pow(progress, 0.5); // Fast start, slow end
+    const opacity = 1.0 - Math.pow(progress, 2); // Fade out towards end
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // 1. Central Core (Expanding Sphere)
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, currentRadius);
+    grad.addColorStop(0, "#fff"); // Hot center
+    grad.addColorStop(0.3, s.color);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+
+    ctx.globalAlpha = opacity * 0.8;
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, currentRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Spinning Rays (God Rays)
+    ctx.globalAlpha = opacity * 0.6;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    const rayLen = currentRadius * 1.5;
+
+    // Rotate rays slowly
+    const rotation = s.life * 0.05;
+
+    s.rays.forEach((angle) => {
+      const a = angle + rotation;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * rayLen, Math.sin(a) * rayLen);
+    });
+    ctx.stroke();
+
+    // 3. Shockwave Ring
+    ctx.globalAlpha = opacity;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2 + (1 - progress) * 5; // Thinning out
+    ctx.beginPath();
+    ctx.arc(0, 0, currentRadius * 0.8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+};
+
 // === SHOCKWAVES ===
 let shockwaves = [];
 
@@ -858,9 +1275,15 @@ const drawShockwaves = (ctx) => {
   for (let i = shockwaves.length - 1; i >= 0; i--) {
     const s = shockwaves[i];
     s.radius += s.speed;
-    s.alpha -= 0.04; // Fade out
+    // Adjustable fade or default
+    s.alpha -= s.fadeSpeed || 0.04;
 
-    if (s.alpha <= 0 || s.radius > s.maxRadius) {
+    let remove = false;
+    if (s.alpha <= 0) remove = true;
+    if (s.speed > 0 && s.radius > s.maxRadius) remove = true;
+    if (s.speed < 0 && s.radius <= 0) remove = true;
+
+    if (remove) {
       shockwaves.splice(i, 1);
       continue;
     }
@@ -886,6 +1309,16 @@ const updateParticles = () => {
     p.y += p.vy;
     p.life--;
     if (p.type === "debris") p.angle += p.rotSpeed;
+
+    // Poison Logic
+    if (p.type === "poison_smoke") {
+      p.radius += 0.15; // Expand
+      p.alpha = Math.max(0, p.life / p.maxLife); // Fade
+    }
+    if (p.type === "poison_bubble") {
+      p.x += Math.sin(Date.now() / 100 + p.wobbleOffset) * 0.5; // Wobble
+    }
+
     if (p.life <= 0) particles.splice(i, 1);
   }
 };
@@ -900,6 +1333,98 @@ const drawParticles = (ctx) => {
       ctx.translate(p.x - cameraX, p.y - cameraY);
       ctx.rotate(p.angle);
       ctx.fillRect(-3, -3, 6, 6); // Larger
+      ctx.restore();
+    } else if (p.type === "poison_smoke") {
+      // Soft Gradient Cloud
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, p.radius);
+      grad.addColorStop(0, p.color);
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+
+      ctx.globalAlpha = p.alpha * 0.7;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (p.type === "poison_bubble") {
+      // Shiny Bubble (Ring)
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Specular highlight
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(
+        sx - p.radius * 0.3,
+        sy - p.radius * 0.3,
+        p.radius * 0.2,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    } else if (p.type === "laser_beam") {
+      // CONTINUOUS LASER BEAM SEGMENT
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(p.angle);
+
+      // Draw Line Segment (Rect)
+      ctx.fillStyle = `rgba(0, 243, 255, ${p.life / p.maxLife})`; // Fade out
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#00f3ff";
+
+      // Draw rectangle centered on Y, extending backwards slightly to cover gaps
+      ctx.fillRect(-p.width / 2, -p.height / 2, p.width, p.height);
+
+      // Core (White)
+      ctx.fillStyle = `rgba(255, 255, 255, ${p.life / p.maxLife})`;
+      ctx.fillRect(-p.width / 2, -p.height / 4, p.width, p.height / 2);
+
+      ctx.restore();
+    } else if (p.type === "trail") {
+      // Sniper Trail Glow (User Request)
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = p.color;
+      ctx.fillStyle = p.color;
+
+      // Draw Circle for smooth trail
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+    } else if (p.type === "flare") {
+      // SUPERNOVA FLARE
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      const radius = (p.size || 100) * (p.life / p.maxLife); // Shrink or Fade? Fade looks better usually.
+
+      ctx.save();
+      ctx.globalAlpha = p.life / p.maxLife;
+      // Radial Gradient for Soft Glow
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
+      grad.addColorStop(0, "#fff");
+      grad.addColorStop(0.5, p.color);
+      grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     } else {
       // Standard Spark
@@ -956,40 +1481,96 @@ const drawProjectiles = (ctx) => {
     if (p.type === "LAVA_WAVE") {
       const sx = Math.floor(p.x - cameraX);
       const sy = Math.floor(p.y - cameraY);
-      const radius = 25; // Slightly larger
+
+      // Pulsating Magma Effect
+      const pulse = Math.sin(Date.now() / 100) * 5;
+      const radius = 25 + pulse; // Pulsing Size
 
       ctx.save();
       ctx.translate(sx, sy);
       const angle = Math.atan2(p.vy, p.vx);
       ctx.rotate(angle);
 
-      // Layer 1: Core (Yellow/White)
+      // Layer 1: Core (Yellow/White) - Hot Center
       ctx.fillStyle = "#fff700";
       ctx.beginPath();
-      ctx.arc(0, 0, radius * 0.6, -Math.PI / 2, Math.PI / 2);
+      // Elongated tear shape
+      ctx.ellipse(0, 0, radius * 0.8, radius * 0.5, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Layer 2: Magma (Orange)
-      ctx.fillStyle = "rgba(255, 69, 0, 0.7)";
+      // Layer 2: Magma Crust (Orange/Red)
+      ctx.fillStyle = "rgba(255, 69, 0, 0.6)";
       ctx.beginPath();
-      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.ellipse(-5, 0, radius, radius * 0.7, 0, 0, Math.PI * 2);
       ctx.fill();
 
       // Layer 3: Glow
-      ctx.shadowBlur = 10; // Moderate Glow
-      ctx.shadowColor = "#ff0000";
+      ctx.shadowBlur = 15; // Stronger Glow
+      ctx.shadowColor = "#ff2200";
       ctx.strokeStyle = "#ff4500";
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(0, 0, radius, -Math.PI / 2, Math.PI / 2);
+      ctx.arc(0, 0, radius, 0, Math.PI * 2); // Outer ring
       ctx.stroke();
 
-      // Particles (Dripping Lava)
-      if (Math.random() > 0.7) {
-        createParticle(p.x, p.y, "#ff4500", 2, 10);
+      // Particles (Dripping Lava) - Increased Frequency
+      if (Math.random() > 0.5) {
+        createParticle(p.x, p.y, "#ffaa00", 2, 15); // Sparks
+      }
+      if (Math.random() > 0.8) {
+        createParticle(p.x, p.y, "#550000", 1, 30, "debris"); // Ash/Rock
       }
 
       ctx.restore();
+      return;
+    }
+
+    // SNIPER SHOT TRAIL (User Request)
+    if (p.type === "SNIPER_SHOT") {
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
+
+      // Draw Bullet
+      ctx.beginPath();
+      ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+
+      // Intense Laser Glow
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#00f3ff";
+      ctx.strokeStyle = "#00f3ff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Spawn Dense Trail (Continuous Line Effect)
+      // We spawn MORE particles per frame to fill gaps
+      // Spawn "Laser Beam" Segments (Seamless Line)
+      // We spawn overlapping segments to create a solid beam
+      const steps = 5;
+      const angle = Math.atan2(p.vy, p.vx);
+
+      for (let i = 0; i < steps; i++) {
+        const dt = 0.016;
+        const offset = i / steps;
+        const bx = p.x - p.vx * dt * offset;
+        const by = p.y - p.vy * dt * offset;
+
+        particles.push({
+          x: bx,
+          y: by,
+          vx: 0,
+          vy: 0,
+          life: 30, // Short life (instant fade feeling)
+          maxLife: 30,
+          color: "rgba(0, 243, 255, 1.0)", // Solid Cyan
+          type: "laser_beam",
+          angle: angle,
+          width: 50, // Length of segment
+          height: 6, // Thickness
+        });
+      }
       return;
     }
 
@@ -1039,9 +1620,12 @@ const drawPlayer = (ctx, p) => {
   const isMe = p.id === myId;
   const primaryColor = p.color || (isMe ? "#00ccff" : "#ff3333");
 
-  // Use Class to determine shape if specific hero not defined
+  // Resolve Hero Name robustly
+  const heroName =
+    p.heroName ||
+    (typeof p.hero === "string" ? p.hero : p.hero?.name) ||
+    "Unknown";
   const heroClass = p.heroClass || p.hero?.class || "Damage";
-  const heroName = p.heroName || p.hero?.name || "Unknown";
 
   // Emit Particles based on Hero (DISABLE if invisible and not me)
   if (Math.random() > 0.5 && (!p.invisible || p.id === myId)) {
@@ -1054,21 +1638,215 @@ const drawPlayer = (ctx, p) => {
 
   ctx.save();
 
+  // INVINCIBILITY VISUAL (Spawn Protection / Citadel)
+  if (p.isInvincible) {
+    // Pulsing Shield Effect
+    const time = Date.now();
+    const pulse = Math.sin(time / 100) * 3; // Fast pulse
+
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#FFD700"; // Gold Glow
+    ctx.strokeStyle = `rgba(255, 215, 0, ${0.5 + Math.sin(time / 200) * 0.3})`; // Flashing Gold
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, 30 + pulse, 0, Math.PI * 2); // Slightly larger than player
+    ctx.stroke();
+
+    // Inner fill (faint)
+    ctx.fillStyle = "rgba(255, 215, 0, 0.1)";
+    ctx.fill();
+
+    ctx.shadowBlur = 0; // Reset
+  }
+
   // Stealth Handler
   if (p.invisible) {
-    // REVEAL LOGIC: Visible if Me OR Flashing (Hit)
-    if (p.id !== myId && (!p.flashTime || p.flashTime <= 0)) {
-       ctx.restore(); // Restore context before returning
-       return; // Total Invisibility (Forces black artifacts to not exist)
+    // TRUE INVISIBILITY: No Flashing Reveal (Prevents "Skeleton" Glitch)
+    if (p.id !== myId) {
+      ctx.restore();
+      return;
     }
 
     // If visible (Self or Hit), set Ghost Alpha
     if (p.id === myId) ctx.globalAlpha = 0.4;
     else ctx.globalAlpha = 0.6;
+  } else if (p.isPhasing || (p.hero === "Ghost" && p.isSkillActive)) {
+    // GHOST PHASING TRANSPARENCY
+    ctx.globalAlpha = 0.4;
   }
 
   ctx.translate(screenX, screenY);
   ctx.rotate(p.angle + Math.PI / 2);
+
+  // === VISUAL BUFFS (Hero Specific) ===
+
+  // TITAN: Unstoppable (Gold Aura)
+  if (p.isUnstoppable) {
+    ctx.save();
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ffd700"; // Gold
+    ctx.strokeStyle = "#ffd700";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    // Undo rotation for stable aura? No, circle doesn't matter.
+    ctx.arc(0, 0, 28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // BRAWLER: Vampirism (Red Aura)
+  if (p.lifestealActive) {
+    ctx.save();
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#ff0000";
+    ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 30, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // CITADEL: Reflect (Spikes/Thorns)
+  if (p.reflectDamage) {
+    ctx.save();
+    ctx.strokeStyle = "#fff"; // White Spikes
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const count = 8;
+    for (let i = 0; i < count; i++) {
+      // Fixed Spikes relative to player rotation
+      const a = (i * Math.PI * 2) / count;
+      const r1 = 25;
+      const r2 = 35;
+      ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // BLAZE: Fire Trail (Particle Spawner)
+  if (p.hasFireTrail) {
+    // Spawn particles locally
+    // Check if visible to client (Optimization)
+    if (Math.random() < 0.3) {
+      createParticle(p.x, p.y, "#ff4500", 2, 20); // Fire color
+    }
+  }
+
+  // --- TESLA STORM VISUAL ZONE (ACTIVE SKILL) ---
+  // Improved Visibility & Robust Check
+  if (p.isSkillActive && heroName === "Storm") {
+    ctx.save();
+    const radius = 250; // Sync with Server (Radius 250)
+    const time = Date.now() / 1000;
+
+    // Remove Player Rotation (Stable Zone)
+    ctx.rotate(-(p.angle + Math.PI / 2));
+
+    // Layer 1: Main JAGGED Electric Ring
+    ctx.save();
+    ctx.rotate(time * 2.0); // Fast Rotation
+    ctx.beginPath();
+
+    // Draw Jagged Circle
+    const segments = 40;
+    for (let i = 0; i < segments; i++) {
+      const theta = (i / segments) * Math.PI * 2;
+      // Random Jitter for Electric Look
+      const jitter = (Math.random() - 0.5) * 15;
+      const r = radius + jitter;
+      const x = Math.cos(theta) * r;
+      const y = Math.sin(theta) * r;
+
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+
+    ctx.strokeStyle = "#00F3FF"; // Electric Blue
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#00F3FF";
+    ctx.shadowBlur = 20; // Heavy Glow
+    ctx.stroke();
+    ctx.restore();
+
+    // Layer 2: REMOVED INNER DASHED RING (User Request: "enleve le rond en traitié en dessous")
+
+    // Layer 3: Area Fill (Pulsing blue)
+    const pulse = 0.05 + Math.sin(time * 10) * 0.02; // Fast flicker
+    ctx.fillStyle = `rgba(0, 243, 255, ${pulse})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Volumetric Energy Glow (Ready Indicator)
+  if ((p.skillCD || 0) <= 0) {
+    ctx.save();
+
+    // Create Gradient centered on player (relative 0,0)
+    // Breathing Radius: 60px to 80px
+    const time = Date.now() / 1000;
+    const rMax = 70 + Math.sin(time * 3) * 10;
+
+    const grad = ctx.createRadialGradient(0, 0, 10, 0, 0, rMax);
+
+    // Core (Bright Gold)
+    grad.addColorStop(0, "rgba(255, 215, 0, 0.4)");
+    // Mid (Orange-Gold)
+    grad.addColorStop(0.5, "rgba(255, 160, 0, 0.15)");
+    // Edge (Fade out)
+    grad.addColorStop(1, "rgba(255, 215, 0, 0)");
+
+    ctx.fillStyle = grad;
+
+    // Draw the glow
+    ctx.beginPath();
+    ctx.arc(0, 0, rMax, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Optional: Subtle Energy Particles (Static visual for performance)
+    // Random sparkles near center?
+    // Let's keep it clean as requested "aura qui sort de moi"
+
+    ctx.restore();
+  }
+
+  // --- SPRINT WIND EFFECT (User Request) ---
+  if (p.isSprinting) {
+    ctx.save();
+    // Wind Lines trailing behind
+    // Calculate angle opposite to movement (assuming facing mouseAngle approx or use velocity if available)
+    // We only have mouseAngle (p.angle). Let's use that for direction.
+    const trailAngle = p.angle + Math.PI; // Behind
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+
+    // Draw 3 randomish lines
+    const time = Date.now() / 100;
+    for (let i = 0; i < 3; i++) {
+      const offset = Math.sin(time + i) * 15;
+      const len = 20 + Math.random() * 15;
+
+      const startX = Math.cos(trailAngle) * 20 - Math.sin(trailAngle) * offset;
+      const startY = Math.sin(trailAngle) * 20 + Math.cos(trailAngle) * offset;
+
+      const endX = startX + Math.cos(trailAngle) * len;
+      const endY = startY + Math.sin(trailAngle) * len;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // --- DRAW PLAYER SHIP ---
   // Layer 1: Base Hull
@@ -1080,7 +1858,7 @@ const drawPlayer = (ctx, p) => {
   // Standard players just get subtle hit feedback or standard shadow.
   if (p.flashTime > 0 && p.invisible) {
     ctx.shadowBlur = 10; // Moderate Neon
-    ctx.shadowColor = "#ffffff"; 
+    ctx.shadowColor = "#ffffff";
   } else {
     ctx.shadowBlur = 5; // Moderate Neon (User Request: "Un peu de neon")
     ctx.shadowColor = primaryColor;
@@ -1094,34 +1872,63 @@ const drawPlayer = (ctx, p) => {
   if (p.isPoisoned && (!p.invisible || p.id === myId || p.flashTime > 0)) {
     ctx.save();
     const time = Date.now() / 200;
-    ctx.strokeStyle = "#00FF00"; // Bright Green
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.8;
 
-    // Bubbling Ring
+    // Pulsing Radius
+    const pulse = Math.sin(Date.now() / 150) * 3;
+    const auraRadius = 35 + pulse;
+
+    // 1. Toxic Haze (Gradient Fill)
+    const hazeGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, auraRadius);
+    hazeGrad.addColorStop(0, "rgba(0, 255, 0, 0)");
+    hazeGrad.addColorStop(0.6, "rgba(50, 205, 50, 0.2)");
+    hazeGrad.addColorStop(1, "rgba(0, 255, 0, 0)");
+
+    ctx.fillStyle = hazeGrad;
     ctx.beginPath();
-    // Radius pulses
-    const r = 35 + Math.sin(time) * 3;
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, auraRadius + 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Inner Toxic Ring (Rotating dashes)
+    ctx.beginPath();
+    ctx.arc(0, 0, 30, 0, Math.PI * 2); // Tight ring
+    ctx.strokeStyle = "#32cd32";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 10]);
+    ctx.lineDashOffset = -time * 5; // Rotate
     ctx.stroke();
 
-    // Inner Bubbles
-    ctx.fillStyle = "#32cd32";
-    for (let i = 0; i < 3; i++) {
-      const angle = (time + i * 2) % (Math.PI * 2);
-      const br = 25;
-      const bx = Math.cos(angle) * br;
-      const by = Math.sin(angle) * br;
+    // 3. Outer Glow Ring
+    ctx.beginPath();
+    ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "#00FF00"; // Bright Green
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]); // Solid
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#39ff14"; // Neon Green
+    ctx.stroke();
+
+    // 4. Bubbles (Simple particles in aura)
+    ctx.fillStyle = "rgba(173, 255, 47, 0.8)";
+    const bubbles = 3;
+    for (let i = 0; i < bubbles; i++) {
+      const angle = (time + i * ((Math.PI * 2) / bubbles)) % (Math.PI * 2);
+      const dist = 25 + Math.sin(time * 2 + i) * 5;
+      const bx = Math.cos(angle) * dist;
+      const by = Math.sin(angle) * dist;
       ctx.beginPath();
-      ctx.arc(bx, by, 4, 0, Math.PI * 2);
+      ctx.arc(bx, by, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
     ctx.restore();
   }
 
   // --- ACTIVE SKILL AURA (Energy Pulse) ---
   // Disable if Invisible
-  if ((p.isSkillActive || p.shield) && (!p.invisible || p.id === myId || p.flashTime > 0)) {
+  if (
+    (p.isSkillActive || p.shield) &&
+    (!p.invisible || p.id === myId || p.flashTime > 0)
+  ) {
     const time = Date.now() / 1000; // Seconds
 
     ctx.save();
@@ -1166,129 +1973,11 @@ const drawPlayer = (ctx, p) => {
   // Use Class to determine shape if specific hero not defined
   // heroClass already defined above for Aura logic
 
-  if (heroClass === "Tank") {
-    // TANK (Hexagon)
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    // Start at Top (-25, 0) logic
-    for (let i = 0; i < 6; i++) {
-      // Offset angle by -PI/2 to start at Top
-      const angle = (i * Math.PI) / 3 - Math.PI / 2;
-      ctx.lineTo(25 * Math.cos(angle), 25 * Math.sin(angle));
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.stroke();
-    // Shield
-    // Shield
-    if (p.shield) {
-      // CITADEL: 360 Shield if Invincible/Citadel
-      if (p.hero === "Citadel" || heroName === "Citadel") {
-        ctx.beginPath();
-        ctx.arc(0, 0, 45, 0, Math.PI * 2); // Full Circle
-        ctx.strokeStyle = "#00ffff";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        // Force Field Effect
-        ctx.fillStyle = "rgba(0, 255, 255, 0.2)";
-        ctx.fill();
-      } else {
-        // Standard Tank Shield (Frontal)
-        ctx.beginPath();
-        // Arc centered at Top (-PI/2)
-        ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
-        ctx.strokeStyle = "#00ffff";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-      }
-    }
-  } else if (p.isFrozen) {
-    // IMPROVED FREEZE VISUAL (Ice Crystal Overlay)
-    // Procedural jagged shape
-    ctx.save();
-    ctx.beginPath();
-    const spikes = 8;
-    const outerRadius = 45;
-    const innerRadius = 25;
+  // --- HERO VISUALS ---
+  // Replaced with reusable function
+  drawHeroBody(ctx, p, primaryColor);
 
-    // Shivering effect
-    const shiverX = (Math.random() - 0.5) * 3;
-    const shiverY = (Math.random() - 0.5) * 3;
-    ctx.translate(shiverX, shiverY);
-
-    for (let i = 0; i < spikes; i++) {
-      const step = Math.PI / spikes;
-      const rot = (Math.PI / 2) * 3;
-      let x = 0;
-      let y = 0;
-
-      let ang = i * step * 2 + rot;
-      x = Math.cos(ang) * outerRadius;
-      y = Math.sin(ang) * outerRadius;
-      ctx.lineTo(x, y);
-
-      ang = i * step * 2 + step + rot;
-      x = Math.cos(ang) * innerRadius;
-      y = Math.sin(ang) * innerRadius;
-      ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-
-    ctx.fillStyle = "rgba(0, 243, 255, 0.6)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
-  } else if (heroClass === "Speed") {
-    // SPEED (Arrow/Dart) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    ctx.moveTo(0, -30); // Tip Top
-    ctx.lineTo(20, 20); // Bottom Right
-    ctx.lineTo(0, 10); // Center indent
-    ctx.lineTo(-20, 20); // Bottom Left
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.stroke();
-  } else if (heroClass === "Support") {
-    // SUPPORT (Box/Medical) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.fillRect(-20, -20, 40, 40); // Base Box
-    ctx.fillStyle = "#fff";
-
-    // Cross / Gun pointing UP
-    // Vertical bar sticking out top
-    ctx.fillRect(-5, -30, 10, 30);
-    // Horizontal Cross bar
-    ctx.fillRect(-15, -20, 30, 10);
-
-    ctx.strokeStyle = "#fff"; // Changed from #000 to #fff for consistency
-    ctx.lineWidth = 2; // Moderate Border
-    ctx.lineJoin = "round";
-    ctx.strokeRect(-15, -15, 30, 30); // Inner Detail
-  } else {
-    // DAMAGE / DEFAULT (Triangle) - Point UP
-    ctx.fillStyle = primaryColor;
-    ctx.beginPath();
-    ctx.moveTo(0, -30); // Tip Top
-    ctx.lineTo(20, 20);
-    ctx.lineTo(-20, 20);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 3;
-    ctx.lineJoin = "round";
-    ctx.stroke();
-  }
-
-  ctx.stroke();
+  // ctx.stroke(); // REMOVED: Caused ghosting for Support class (re-stroked previous paths)
 
   // SNIPER LASER SIGHT
   // Visible ONLY to Local Player AND when Skill is Ready (E)
@@ -1297,13 +1986,74 @@ const drawPlayer = (ctx, p) => {
     p.id === myId &&
     (p.skillCD || 0) <= 0
   ) {
-    ctx.beginPath();
-    ctx.moveTo(0, -35); // Start at gun tip (outside body)
-    ctx.lineTo(0, -2000); // 2000px aiming line (X-Ray)
+    let laserLen = 2000;
 
-    ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // 0.8 Opacity (Clearer)
-    ctx.lineWidth = 2; // Thicker to see dashes
-    ctx.setLineDash([20, 20]); // Larger dashes
+    // RAYCAST to stop at Walls (User Request: "ne traverse pas les murs")
+    const startX = p.x;
+    const startY = p.y;
+    // Angle is mouseAngle. p.angle is updated from server or local mouse logic.
+    // Ensure we use the same angle as the rotation: p.angle
+    const angle = p.angle;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+
+    const obstacles = mapData?.obstacles || [];
+
+    // Simple Ray-AABB Intersection
+    for (const obs of obstacles) {
+      // Check if wall is potentially in range (Optimization)
+      // ... Skip for now, low obst count
+
+      // Check intersection with each wall side
+      // Rect: x, y, w, h
+      const lines = [
+        { x1: obs.x, y1: obs.y, x2: obs.x + obs.w, y2: obs.y }, // Top
+        { x1: obs.x, y1: obs.y + obs.h, x2: obs.x + obs.w, y2: obs.y + obs.h }, // Bottom
+        { x1: obs.x, y1: obs.y, x2: obs.x, y2: obs.y + obs.h }, // Left
+        { x1: obs.x + obs.w, y1: obs.y, x2: obs.x + obs.w, y2: obs.y + obs.h }, // Right
+      ];
+
+      for (const line of lines) {
+        // Ray-Segment Intersection
+        // Ray: P + t*D
+        // Seg: A + u*(B-A)
+        const x1 = line.x1;
+        const y1 = line.y1;
+        const x2 = line.x2;
+        const y2 = line.y2;
+
+        const x3 = startX;
+        const y3 = startY;
+        const x4 = startX + dx * 2000;
+        const y4 = startY + dy * 2000;
+
+        const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (den === 0) continue; // Parallel
+
+        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
+
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+          // Hit!
+          // Distance from start
+          const hitX = x1 + t * (x2 - x1);
+          const hitY = y1 + t * (y2 - y1);
+          const dist = Math.sqrt((hitX - startX) ** 2 + (hitY - startY) ** 2);
+
+          if (dist < laserLen) {
+            laserLen = dist;
+          }
+        }
+      }
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(0, -35); // Start at gun tip
+    ctx.lineTo(0, -laserLen); // Draw to calculated dist
+
+    ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // 0.8 Opacity
+    ctx.lineWidth = 2; // Thicker
+    ctx.setLineDash([20, 20]); // Dashed
 
     // Laser Glow
     ctx.shadowColor = "#ff0000";
@@ -1311,27 +2061,7 @@ const drawPlayer = (ctx, p) => {
 
     ctx.stroke();
     ctx.shadowBlur = 0; // Reset
-    ctx.setLineDash([]); // Reset Explicitly just in case
-  }
-
-  // FROST EFFECT (Frozen Enemy)
-  if (p.isFrozen || p.isRooted) {
-    // Check property name from server (likely isRooted or custom speed check)
-    ctx.save();
-    ctx.fillStyle = "rgba(0, 255, 255, 0.4)";
-    ctx.strokeStyle = "#00ffff";
-    ctx.lineWidth = 2;
-    // Draw Ice Cube around player
-    ctx.fillRect(-25, -25, 50, 50);
-    ctx.strokeRect(-25, -25, 50, 50);
-
-    // Crack details
-    ctx.beginPath();
-    ctx.moveTo(-15, -15);
-    ctx.lineTo(0, 0);
-    ctx.lineTo(15, -5);
-    ctx.stroke();
-    ctx.restore();
+    ctx.setLineDash([]); // Reset Explicitly
   }
 
   // GENERIC AIM CURSOR (Only Local Player)
@@ -1503,11 +2233,11 @@ const drawPlayerNames = (ctx) => {
 
     // BUSH HIDING LOGIC for Names
     const myBushId = getPlayerBushId(me);
-    const targetBushId = getPlayerBushId(p); 
+    const targetBushId = getPlayerBushId(p);
 
     // VISIBILITY CHECK:
     const dist = Math.hypot(p.x - me.x, p.y - me.y);
-    const visionRadius = 320; 
+    const visionRadius = 320;
 
     // Hidden if:
     // - Target is in a bush
@@ -1525,16 +2255,17 @@ const drawPlayerNames = (ctx) => {
     // Visuals (Flash)
     let isDamaged = false;
     if (p.id && playerVisuals.value[p.id]) {
-        const v = playerVisuals.value[p.id];
-        if (v.flashTime > 0) isDamaged = true;
+      const v = playerVisuals.value[p.id];
+      if (v.flashTime > 0) isDamaged = true;
     }
     // Note: Decoys usually don't have 'id' in the same list as players, so no flash logic for now unless added.
 
     // Logic: Hide if (Bush Logic) OR (Invisible Skill Logic)
     const isInvisibleSkill = p.invisible && !isMeOrMine && !isDamaged;
-    
+
     // Bush Hide: In Bush AND (Not Same Bush) AND (Not In Vision) AND (Not Damaged) AND (Not Me)
-    const isHiddenBush = inBush && !sameBush && !inVision && !isDamaged && !isMeOrMine;
+    const isHiddenBush =
+      inBush && !sameBush && !inVision && !isDamaged && !isMeOrMine;
 
     const isHidden = isHiddenBush || isInvisibleSkill;
 
@@ -1547,10 +2278,10 @@ const drawPlayerNames = (ctx) => {
     ctx.textAlign = "center";
     ctx.shadowColor = "#000";
     ctx.shadowBlur = 4;
-    
+
     // Render Name (or Hero name fallback)
     let name = p.username || p.hero;
-    if (typeof name === 'object') name = name.name; // Handle if hero object passed
+    if (typeof name === "object") name = name.name; // Handle if hero object passed
     ctx.fillText(name || "Unknown", screenX, screenY - 65);
 
     // CORES DISPLAY
@@ -1567,8 +2298,8 @@ const drawPlayerNames = (ctx) => {
     // HP Bar
     const maxHp = p.maxHp || 100;
     const hpPct = Math.max(0, p.hp / maxHp);
-    const barW = 100; 
-    const barH = 14; 
+    const barW = 100;
+    const barH = 14;
     const barX = screenX - barW / 2;
     const barY = screenY - 60;
 
@@ -1587,46 +2318,67 @@ const drawPlayerNames = (ctx) => {
       barY + 11
     );
 
-
     // MARKED STATUS
     if (p.isMarked) {
       ctx.fillStyle = "#ff00ff"; // Purple/Magenta
       ctx.font = "bold 16px 'Segoe UI'";
       ctx.fillText("☠ MARKED ☠", screenX, barY - 15);
-      
+
       // Purple Glow Border on Bar
       ctx.strokeStyle = "#ff00ff";
       ctx.lineWidth = 2;
       ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
+    }
+  };
 
+  // 1. Render Players
+  players.forEach(renderHUD);
+
+  // 2. Render Decoys
+  entities.forEach((ent) => {
+    if (ent.type === "DECOY") {
+      renderHUD(ent);
     }
   });
 };
 
 const drawLeaderboard = (ctx) => {
   if (!players || players.length === 0) return;
+  // User Request: No Leaderboard in BR Mode
+  if (route.query.mode === "battle_royale") return;
 
   const sorted = [...players].sort((a, b) => (b.kills || 0) - (a.kills || 0));
   const top5 = sorted.slice(0, 5);
 
-  const boxW = 200;
-  const boxH = 50 + top5.length * 25;
+  const boxW = 240;
+  const boxH = 40 + top5.length * 25;
+  // Position: Top Right
   const startX = window.innerWidth - boxW - 20;
-  const startY = 20;
+  const startY = 80; // Below HUD
 
-  // Background
-  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-  ctx.fillRect(startX, startY, boxW, boxH);
-  ctx.strokeStyle = "#00f3ff";
-  ctx.strokeRect(startX, startY, boxW, boxH);
+  ctx.save();
+  // Glassmorphism Background
+  ctx.fillStyle = "rgba(10, 10, 15, 0.6)";
+  ctx.beginPath();
+  ctx.roundRect(startX, startY, boxW, boxH, 10);
+  ctx.fill();
 
-  // Title
+  // Neon Border
+  ctx.strokeStyle = "rgba(0, 243, 255, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Header Glow
+  ctx.shadowColor = "#00f3ff";
+  ctx.shadowBlur = 10;
   ctx.fillStyle = "#fff";
-  ctx.font = 'bold 16px "Segoe UI"';
-  ctx.textAlign = "left";
-  ctx.fillText("LEADERBOARD", startX + 10, startY + 20);
+  ctx.font = 'bold 14px "Segoe UI"';
+  ctx.textAlign = "center";
+  ctx.fillText("🏆 LEADERBOARD", startX + boxW / 2, startY + 25);
+  ctx.shadowBlur = 0; // Reset
 
   // Rows
+  ctx.textAlign = "left";
   ctx.font = '14px "Segoe UI"';
   top5.forEach((p, i) => {
     const y = startY + 45 + i * 25;
@@ -1647,6 +2399,317 @@ const drawLeaderboard = (ctx) => {
   });
 };
 
+// --- GHOST TELEPORT MARKER RENDERING ---
+const drawMarkers = (ctx) => {
+  const me = players.find((p) => p.id === myId);
+
+  players.forEach((p) => {
+    // Only draw marker for MY player ("seulement lui peut voir")
+    if (p.id === myId && p.teleportMarker) {
+      const mx = p.teleportMarker.x - cameraX;
+      const my = p.teleportMarker.y - cameraY;
+
+      ctx.save();
+      ctx.translate(mx, my);
+
+      const time = Date.now() / 200;
+
+      // 1. Ground Glow (Large base)
+      const glowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 60);
+      glowGrad.addColorStop(0, "rgba(0, 255, 255, 0.3)");
+      glowGrad.addColorStop(0.5, "rgba(0, 255, 255, 0.15)");
+      glowGrad.addColorStop(1, "rgba(0, 255, 255, 0)");
+      ctx.fillStyle = glowGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Pulsing Rings (Larger and brighter)
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#00FFFF";
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 20 + Math.sin(time) * 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 35 + Math.cos(time) * 3, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.6)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 50 + Math.sin(time * 0.5) * 5, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 3. Vertical Beam (Taller and brighter)
+      const beamGrad = ctx.createLinearGradient(0, 0, 0, -80);
+      beamGrad.addColorStop(0, "rgba(0, 255, 255, 0.7)");
+      beamGrad.addColorStop(1, "rgba(0, 255, 255, 0)");
+
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(8, 0);
+      ctx.lineTo(0, -80);
+      ctx.fill();
+
+      // 4. Floating Icon (Larger and brighter)
+      ctx.fillStyle = "#FFFFFF";
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#00FFFF";
+      ctx.beginPath();
+      ctx.arc(0, -50 + Math.sin(time * 2) * 8, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 5. Cross marker on ground
+      ctx.strokeStyle = "#00FFFF";
+      ctx.lineWidth = 3;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.lineTo(15, 0);
+      ctx.moveTo(0, -15);
+      ctx.lineTo(0, 15);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+  });
+};
+
+const drawFireTrails = (ctx) => {
+  players.forEach((p) => {
+    if (!p.hasFireTrail) return;
+
+    if (!playerVisuals.value[p.id]) playerVisuals.value[p.id] = {};
+    const visuals = playerVisuals.value[p.id];
+    if (!visuals.trail) visuals.trail = [];
+
+    // Add point
+    visuals.trail.push({ x: p.x, y: p.y, time: Date.now() });
+
+    // Prune old points
+    const now = Date.now();
+    visuals.trail = visuals.trail.filter((pt) => now - pt.time < 500); // 0.5s trail
+
+    if (visuals.trail.length < 2) return;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // 1. Heat Haze / Glow (Red/Orange)
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ff4500";
+    ctx.strokeStyle = "rgba(255, 69, 0, 0.6)"; // Red-Orange
+    ctx.lineWidth = 14;
+
+    ctx.beginPath();
+    visuals.trail.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+
+    // 2. Core (Yellow/White)
+    ctx.shadowBlur = 5;
+    ctx.shadowColor = "#FFFF00";
+    ctx.strokeStyle = "#FFFF00"; // Yellow
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    visuals.trail.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Add smoke particles
+    if (Math.random() < 0.1) {
+      createParticle(p.x, p.y, "#555", 1, 30, "smoke");
+    }
+  });
+};
+
+const drawHeroBody = (ctx, p, color, alpha = 1) => {
+  // Reusable Hero Shape Drawer
+  const heroClass = p.heroClass || "Damage";
+  const heroName = typeof p.hero === "object" ? p.hero.name : p.hero;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  if (heroClass === "Tank") {
+    // TANK (Hexagon)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i * Math.PI) / 3 - Math.PI / 2;
+      ctx.lineTo(25 * Math.cos(angle), 25 * Math.sin(angle));
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    // Shield (Only draw for real player, not ghosts usually, but let's keep it for cool factor)
+    if (p.shield) {
+      if (heroName === "Citadel") {
+        ctx.beginPath();
+        ctx.arc(0, 0, 45, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.fillStyle = `rgba(0, 255, 255, ${0.2 * alpha})`;
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, 45, -Math.PI / 2 - 1, -Math.PI / 2 + 1);
+        ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
+    }
+  } else if (p.isFrozen || p.isRooted) {
+    // FROZEN (Ice Crystal)
+    ctx.beginPath();
+    const spikes = 8;
+    const outerRadius = 45;
+    const innerRadius = 25;
+    // Shivering effect
+    const shiverX = (Math.random() - 0.5) * 3;
+    const shiverY = (Math.random() - 0.5) * 3;
+    ctx.translate(shiverX, shiverY);
+
+    for (let i = 0; i < spikes; i++) {
+      const step = Math.PI / spikes;
+      const rot = (Math.PI / 2) * 3;
+      let ang = i * step * 2 + rot;
+      ctx.lineTo(Math.cos(ang) * outerRadius, Math.sin(ang) * outerRadius);
+      ang = i * step * 2 + step + rot;
+      ctx.lineTo(Math.cos(ang) * innerRadius, Math.sin(ang) * innerRadius);
+    }
+    ctx.closePath();
+    ctx.fillStyle = `rgba(0, 243, 255, ${0.6 * alpha})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 * alpha})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else if (heroClass === "Speed") {
+    // SPEED (Arrow)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, -30);
+    ctx.lineTo(20, 20);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-20, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  } else if (heroClass === "Support") {
+    // SUPPORT (Box)
+    ctx.fillStyle = color;
+    ctx.fillRect(-20, -20, 40, 40);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillRect(-5, -30, 10, 30);
+    ctx.fillRect(-15, -20, 30, 10);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.strokeRect(-15, -15, 30, 30);
+  } else {
+    // DAMAGE (Triangle)
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, -30);
+    ctx.lineTo(20, 20);
+    ctx.lineTo(-20, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
+const drawVoltTrails = (ctx) => {
+  players.forEach((p) => {
+    if (!p.staticFieldActive) return;
+
+    if (!playerVisuals.value[p.id]) playerVisuals.value[p.id] = {};
+    const visuals = playerVisuals.value[p.id];
+    if (!visuals.voltTrail) visuals.voltTrail = [];
+
+    // Add point
+    visuals.voltTrail.push({ x: p.x, y: p.y, time: Date.now() });
+
+    // Prune old points (3s duration matches Server Trail Life)
+    const now = Date.now();
+    visuals.voltTrail = visuals.voltTrail.filter((pt) => now - pt.time < 3000);
+
+    if (visuals.voltTrail.length < 2) return;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Jitter Effect for Electricity
+    const jitter = () => (Math.random() - 0.5) * 5;
+
+    // 3. Segmented Line for Tapering Fade
+    // We draw each segment individually to control alpha/width based on age
+    visuals.voltTrail.forEach((pt, i) => {
+      if (i === 0) return;
+      const prev = visuals.voltTrail[i - 1];
+
+      const Age = now - pt.time;
+      const Ratio = 1 - Age / 3000; // 1.0 (New) -> 0.0 (Old)
+      if (Ratio <= 0) return;
+
+      ctx.beginPath();
+      const j1 = jitter();
+      const j2 = jitter();
+
+      ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+      ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+
+      // Dynamic Style
+      ctx.lineWidth = 12 * Ratio; // Taper Width
+      ctx.strokeStyle = `rgba(0, 243, 255, ${0.4 * Ratio})`; // Fade Alpha
+      ctx.shadowBlur = 15 * Ratio;
+      ctx.stroke();
+
+      // Inner Core (White)
+      ctx.beginPath();
+      ctx.moveTo(prev.x - cameraX + j1, prev.y - cameraY + j1);
+      ctx.lineTo(pt.x - cameraX + j2, pt.y - cameraY + j2);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${Ratio})`;
+      ctx.lineWidth = 4 * Ratio;
+      ctx.shadowBlur = 5 * Ratio;
+      ctx.stroke();
+    });
+
+    ctx.restore();
+  });
+};
+
 const loop = (ctx) => {
   // Update Camera
   let target = players.find((p) => p.id === myId);
@@ -1657,8 +2720,17 @@ const loop = (ctx) => {
   if (target) {
     const targetX = target.x - window.innerWidth / 2;
     const targetY = target.y - window.innerHeight / 2;
-    cameraX += (targetX - cameraX) * 0.1;
-    cameraY += (targetY - cameraY) * 0.1;
+
+    // FIX: Snap if distance is too large (Teleport/Knockback) to prevent culling visual glitch
+    // Goliath Knockback (400) was causing player to fly off-screen while camera lagged
+    const dist = Math.hypot(targetX - cameraX, targetY - cameraY);
+    if (dist > 300) {
+      cameraX = targetX;
+      cameraY = targetY;
+    } else {
+      cameraX += (targetX - cameraX) * 0.1;
+      cameraY += (targetY - cameraY) * 0.1;
+    }
   }
 
   // UPDATE & CLEAR
@@ -1694,6 +2766,16 @@ const loop = (ctx) => {
 
   // 2. Floor Decoration (Crates, Items) - UNDER Players
   drawFloorDeco(ctx);
+
+  // 2.5 Fire Trails (Blaze) - Rendered as Ribbon
+  drawFireTrails(ctx);
+
+  // 2.6 Volt Trails (Unified Electric Ribbon) - Rendered as Ribbon
+  // 2.6 Volt Trails (Unified Electric Ribbon) - Rendered as Ribbon
+  // drawVoltTrails(ctx); // REPLACED by Entity-Based Rendering below
+
+  // Group Volt Segments for Lightning Rendering
+  const voltSegments = {};
 
   // 3. Projectiles MOVED AFTER BUSHES for visibility
   // drawProjectiles(ctx); MOVED
@@ -1741,14 +2823,12 @@ const loop = (ctx) => {
       }
       ctx.restore();
     } else if (ent.type === "DECOY") {
-      // Draw Decoy (REALISTIC: Identical to real player)
+      // Draw Decoy
       ctx.save();
-      // ctx.globalAlpha = 1.0; // Default opacity for realism
-      // Reuse drawPlayer logic
       const fakePlayer = {
         ...ent,
-        id: ent.ownerId || "decoy", // Pass ID for potential logic (but not invisibility)
-        angle: Math.atan2(ent.vy, ent.vx), // Face movement direction
+        id: ent.ownerId || "decoy",
+        angle: Math.atan2(ent.vy, ent.vx),
         hero: ent.heroName,
         heroClass: ent.heroClass,
         shield: false,
@@ -1756,8 +2836,63 @@ const loop = (ctx) => {
       };
       drawPlayer(ctx, fakePlayer);
       ctx.restore();
+    } else if (ent.type === "TRAIL_SEGMENT") {
+      // COLLECT FOR LIGHTNING RENDER
+      if (!voltSegments[ent.ownerId]) voltSegments[ent.ownerId] = [];
+      voltSegments[ent.ownerId].push(ent);
     }
   });
+
+  // DRAW VOLT LIGHTNING PATHS
+  for (const [oid, segs] of Object.entries(voltSegments)) {
+    // Sort by Life (High Life = Newest = Closest to Player)
+    segs.sort((a, b) => b.life - a.life);
+
+    if (segs.length < 2) continue;
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Jitter function
+    const jitter = () => (Math.random() - 0.5) * 8;
+
+    // Draw Core
+    ctx.beginPath();
+    segs.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      const jx = jitter(); // Constant jitter for frame? No, random is fine for "buzz"
+      const jy = jitter();
+      if (i === 0) ctx.moveTo(sx + jx, sy + jy);
+      else ctx.lineTo(sx + jx, sy + jy);
+    });
+
+    // Style
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#00f3ff";
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+
+    // Draw Outer Glow / Second Bolt
+    ctx.beginPath();
+    segs.forEach((pt, i) => {
+      const sx = pt.x - cameraX;
+      const sy = pt.y - cameraY;
+      // Different jitter
+      const jx = jitter() * 1.5;
+      const jy = jitter() * 1.5;
+      if (i === 0) ctx.moveTo(sx + jx, sy + jy);
+      else ctx.lineTo(sx + jx, sy + jy);
+    });
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.6)";
+    ctx.lineWidth = 8; // Thicker glow
+    ctx.shadowBlur = 20;
+    ctx.stroke();
+
+    ctx.restore();
+  }
 
   // 5. Players
   players.forEach((p) => {
@@ -1805,8 +2940,12 @@ const loop = (ctx) => {
   });
 
   // 8. PARTICLES & VFX (Over Everything usually)
+  drawMarkers(ctx); // GHOST TELEPORT MARKERS
+
   drawParticles(ctx);
   drawShockwaves(ctx);
+  drawSupernovas(ctx); // NEW SUPERNOVA LAYER
+  drawLightnings(ctx); // Add Lightning Layer
 
   // 9. PLAYER NAMES & HUD (ABSOLUTE TOP LAYER)
   drawPlayerNames(ctx);
@@ -1839,7 +2978,10 @@ if (canvasRef.value) {
     <canvas ref="canvasRef" class="game-canvas"></canvas>
 
     <!-- QUEUE OVERLAY (Matchmaking) -->
-    <div v-if="inQueue" class="queue-overlay">
+    <div
+      v-if="inQueue && route.query.mode === 'battle_royale'"
+      class="queue-overlay"
+    >
       <div class="radar-container">
         <div class="radar-sweep"></div>
         <div class="radar-grid"></div>
@@ -1868,6 +3010,35 @@ if (canvasRef.value) {
           >
         </div>
 
+        <!-- SECURE CHAT -->
+        <div class="mm-chat">
+          <div class="chat-window">
+            <div
+              v-for="msg in chatMessages"
+              :key="msg.timestamp"
+              class="chat-line"
+            >
+              <span class="chat-author" :style="{ color: msg.skinColor }">{{
+                msg.username
+              }}</span>
+              <span class="chat-content">{{ msg.message }}</span>
+            </div>
+            <div v-if="chatMessages.length === 0" class="chat-empty">
+              SECURE CHANNEL OPEN...
+            </div>
+          </div>
+          <div class="chat-controls">
+            <input
+              v-model="chatInput"
+              @keyup.enter="sendChatMessage"
+              placeholder="TRANSMIT MESSAGE..."
+              class="cyber-input"
+              maxlength="200"
+            />
+            <button @click="sendChatMessage" class="btn-send">►</button>
+          </div>
+        </div>
+
         <button
           class="btn-quit"
           style="margin-top: 20px"
@@ -1881,8 +3052,12 @@ if (canvasRef.value) {
       <div class="mm-player-list">
         <h3>SQUAD LIST</h3>
         <div class="player-list-scroll">
-          <div v-for="player in queuePlayers" :key="player" class="player-entry">
-             <span class="p-icon">👤</span> {{ player }}
+          <div
+            v-for="player in queuePlayers"
+            :key="player"
+            class="player-entry"
+          >
+            <span class="p-icon">👤</span> {{ player }}
           </div>
           <div v-if="queuePlayers.length === 0" class="empty-list">
             Scanning...
@@ -1892,9 +3067,10 @@ if (canvasRef.value) {
     </div>
 
     <!-- BR HUD -->
-    <div v-if="aliveCount > 0" class="br-hud-top-right">
+    <!-- BR HUD (Top Center) -->
+    <div v-if="aliveCount > 0" class="br-hud-top-center">
       <div class="alive-counter">
-        <span class="label">ALIVE</span>
+        <span class="label">TOP:</span>
         <span class="value">{{ aliveCount }}</span>
       </div>
     </div>
@@ -1904,15 +3080,6 @@ if (canvasRef.value) {
       <div v-for="msg in killMessages" :key="msg.id" class="kill-msg">
         {{ msg.text }}
       </div>
-    </div>
-
-    <!-- TOP RIGHT RANK (User Request) -->
-    <div
-      class="top-right-rank-hud"
-      v-if="!inQueue && !isDead && route.query.mode === 'battle_royale'"
-    >
-      <div class="rank-display-hud">TOP {{ aliveCount }}</div>
-      <div class="rank-label">SURVIVORS</div>
     </div>
 
     <!-- Respawn Overlay -->
@@ -1951,6 +3118,29 @@ if (canvasRef.value) {
       <button class="btn btn-primary" @click="router.push('/dashboard')">
         RETURN TO BASE
       </button>
+    </div>
+
+    <!-- BR DEATH SCREEN -->
+    <div v-if="showBRDeathScreen" class="death-overlay">
+      <div class="death-content">
+        <h1>ELIMINATED</h1>
+        <p class="rank">
+          RANK: {{ brDeathInfo.rank }} / {{ brDeathInfo.total }}
+        </p>
+        <p class="killer">
+          KILLED BY: {{ brDeathInfo.killedBy }} ({{ brDeathInfo.killedByHero }})
+        </p>
+        <div v-if="earnedCoins > 0" class="coins-earned">
+          +{{ earnedCoins }} COINS
+        </div>
+
+        <div class="death-actions">
+          <button @click="startSpectate" class="btn-spectate">
+            👁️ SPECTATE
+          </button>
+          <button @click="playAgain" class="btn-return">🔄 PLAY AGAIN</button>
+        </div>
+      </div>
     </div>
 
     <!-- DEATH SCREEN / SPECTATOR -->
@@ -2047,7 +3237,7 @@ if (canvasRef.value) {
         <h3>HERO: {{ gameStore.selectedHero?.name || "UNKNOWN" }}</h3>
       </div>
       <div class="hud-panel center">
-        <h2>NEON ARENA</h2>
+        <!-- Leaderboard moved here on Canvas -->
       </div>
 
       <!-- Skill HUD (Clickable on Mobile) -->
@@ -2057,6 +3247,21 @@ if (canvasRef.value) {
         @click="triggerSkill"
         @touchstart.prevent="triggerSkill"
       >
+        <!-- STAMINA BAR (Battle Royale Only) -->
+        <div
+          class="skill-stamina-bar"
+          v-if="route.query.mode === 'battle_royale'"
+          :class="{ exhausted: myStats.stamina < 5 }"
+        >
+          <div
+            class="stamina-fill"
+            :style="{
+              width: (myStats.stamina / myStats.maxStamina) * 100 + '%',
+              backgroundColor: myStats.stamina > 20 ? '#00f3ff' : '#ff3300',
+            }"
+          ></div>
+        </div>
+
         <div
           class="skill-box"
           :class="{
@@ -2109,7 +3314,10 @@ if (canvasRef.value) {
     </div>
 
     <div class="controls-hint" v-if="!isMobile">
-      WASD: Move | MOUSE: Aim | Space: Shoot
+      <span v-if="route.query.mode === 'battle_royale'">
+        WASD: Move | MOUSE: Aim | Space: Shoot | Sprint: Shift
+      </span>
+      <span v-else> WASD: Move | MOUSE: Aim | Space: Shoot </span>
     </div>
 
     <!-- Mobile Controls Containers -->
@@ -2762,6 +3970,73 @@ if (canvasRef.value) {
 }
 
 .rank-hash {
+  font-size: 3rem;
+  color: rgba(255, 215, 0, 0.5);
+}
+
+/* BR DEATH SCREEN STYLES */
+.death-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.5s;
+}
+
+.death-content {
+  text-align: center;
+  color: #fff;
+  padding: 40px;
+  background: rgba(20, 0, 0, 0.8);
+  border: 2px solid #ff3333;
+  border-radius: 15px;
+  box-shadow: 0 0 30px rgba(255, 51, 51, 0.5);
+}
+
+.death-content h1 {
+  font-size: 4rem;
+  color: #ff3333;
+  text-shadow: 0 0 20px #ff3333;
+  margin-bottom: 20px;
+  letter-spacing: 10px;
+}
+
+.death-content .rank {
+  font-size: 2rem;
+  color: #ffd700;
+  margin: 15px 0;
+  text-shadow: 0 0 10px #ffd700;
+}
+
+.death-content .killer {
+  font-size: 1.5rem;
+  color: #00f3ff;
+  margin: 15px 0;
+  letter-spacing: 2px;
+}
+
+.coins-earned {
+  font-size: 2rem;
+  color: #ffd700;
+  margin: 20px 0;
+  text-shadow: 0 0 15px #ffd700;
+  font-weight: bold;
+}
+
+.death-actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 30px;
+  justify-content: center;
+}
+
+.rank-hash {
   font-size: 2rem;
   color: #888;
 }
@@ -2813,9 +4088,9 @@ if (canvasRef.value) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 600px;
-  height: 600px;
-  border: 2px solid rgba(0, 243, 255, 0.2);
+  width: 1200px; /* Much larger */
+  height: 1200px;
+  border: 2px solid rgba(0, 243, 255, 0.5); /* More visible border */
   border-radius: 50%;
   pointer-events: none;
   z-index: 90;
@@ -2828,13 +4103,14 @@ if (canvasRef.value) {
   background: radial-gradient(
       circle,
       transparent 60%,
-      rgba(0, 243, 255, 0.1) 60%,
-      rgba(0, 243, 255, 0.1) 61%,
+      rgba(0, 243, 255, 0.2) 60%,
+      /* More visible ring */ rgba(0, 243, 255, 0.2) 61%,
       transparent 61%
     ),
-    linear-gradient(rgba(0, 243, 255, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 243, 255, 0.1) 1px, transparent 1px);
-  background-size: 100% 100%, 50px 50px, 50px 50px;
+    linear-gradient(rgba(0, 243, 255, 0.2) 1px, transparent 1px),
+    /* More visible grid */
+      linear-gradient(90deg, rgba(0, 243, 255, 0.2) 1px, transparent 1px);
+  background-size: 100% 100%, 80px 80px, 80px 80px; /* Larger cells */
 }
 
 .radar-sweep {
@@ -2847,8 +4123,8 @@ if (canvasRef.value) {
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
-    rgba(0, 243, 255, 0.4) 30deg,
-    transparent 30deg
+    rgba(0, 243, 255, 0.6) 30deg,
+    /* Brighter sweep */ transparent 30deg
   );
   animation: radarSpin 4s linear infinite;
 }
@@ -2862,56 +4138,108 @@ if (canvasRef.value) {
   }
 }
 
+/* === MODERN MATCHMAKING UI === */
+
 .mm-content {
   z-index: 101;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: rgba(0, 0, 0, 0.85); /* Darker backdrop for text */
-  padding: 40px;
-  border: 1px solid #00f3ff;
-  box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
-  border-radius: 10px;
+  /* Glassmorphism */
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(15px);
+  padding: 50px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  box-shadow: 0 0 50px rgba(0, 243, 255, 0.1),
+    inset 0 0 20px rgba(0, 243, 255, 0.05);
+  min-width: 500px;
+  position: relative;
+  overflow: hidden; /* For scanning effect */
+}
+
+/* Scanning Line Animation */
+.mm-content::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: linear-gradient(90deg, transparent, #00f3ff, transparent);
+  box-shadow: 0 0 20px #00f3ff;
+  animation: scanLine 3s ease-in-out infinite;
+  opacity: 0.5;
+}
+
+@keyframes scanLine {
+  0% {
+    top: -10%;
+  }
+  100% {
+    top: 110%;
+  }
+}
+
+.mm-content h1 {
+  font-size: 2.5rem;
+  margin-bottom: 30px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #fff, #00f3ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.5));
 }
 
 .mm-stats {
-  margin-top: 20px;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
 
 .stat-row {
   display: flex;
   justify-content: space-between;
-  width: 300px;
-  margin-bottom: 10px;
-  font-size: 1.2rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding-bottom: 5px;
+  width: 100%;
+  padding: 15px 20px;
+  background: rgba(0, 243, 255, 0.05);
+  border-radius: 8px;
+  border-left: 2px solid #00f3ff;
+  transition: all 0.3s ease;
+}
+
+.stat-row:hover {
+  background: rgba(0, 243, 255, 0.1);
+  transform: translateX(5px);
 }
 
 .stat-row .label {
-  color: #888;
+  color: #a0a0ff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .stat-row .value {
-  color: #00f3ff;
-  font-weight: bold;
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.1rem;
+  text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
 }
 
 .status-blink {
-  animation: blink 1s infinite;
+  animation: blink 1.5s infinite ease-in-out;
 }
 
-@keyframes blink {
-  50% {
-    opacity: 0.5;
-  }
-}
-
+/* Tips */
 .mm-tips {
-  margin-top: 30px;
-  font-size: 1rem;
-  color: #ccc;
+  margin-top: 40px;
+  padding: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.9rem;
+  color: #888;
   font-style: italic;
   max-width: 400px;
   text-align: center;
@@ -2919,35 +4247,65 @@ if (canvasRef.value) {
 
 .tip-label {
   color: #ffd700;
-  font-weight: bold;
-  margin-right: 5px;
+  font-weight: 800;
+  margin-right: 8px;
+  text-transform: uppercase;
 }
 
-/* PLAYER LIST RIGHT SIDE */
+/* Cancel Button */
+.btn-quit {
+  padding: 12px 40px;
+  background: transparent;
+  border: 1px solid #ff3333;
+  color: #ff3333;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 30px !important;
+}
+
+.btn-quit:hover {
+  background: #ff3333;
+  color: #000;
+  box-shadow: 0 0 20px #ff3333;
+}
+
+/* RIGHT SIDE PLAYER LIST - HOLOGRAPHIC STYLE */
 .mm-player-list {
   position: absolute;
-  right: 50px;
+  right: 60px;
   top: 50%;
   transform: translateY(-50%);
-  width: 250px;
-  height: 400px;
-  background: rgba(0, 0, 20, 0.9);
-  border: 1px solid #00f3ff;
-  border-radius: 10px;
-  padding: 20px;
+  width: 300px;
+  height: 500px;
+
+  background: rgba(5, 5, 10, 0.6);
+  backdrop-filter: blur(10px);
+  border-right: 2px solid rgba(0, 243, 255, 0.3); /* Only right border */
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+
+  border-radius: 20px 0 0 20px; /* Rounded Left */
+  padding: 25px;
   display: flex;
   flex-direction: column;
   z-index: 102;
-  box-shadow: 0 0 20px rgba(0, 243, 255, 0.1);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
 }
 
 .mm-player-list h3 {
-  color: #00f3ff;
-  border-bottom: 1px solid rgba(0, 243, 255, 0.3);
-  padding-bottom: 10px;
-  margin-bottom: 15px;
+  color: #fff;
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  letter-spacing: 3px;
   text-align: center;
-  letter-spacing: 2px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(0, 243, 255, 0.2);
+  margin-bottom: 20px;
 }
 
 .player-list-scroll {
@@ -2955,30 +4313,57 @@ if (canvasRef.value) {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding-right: 5px; /* Scrollbar space */
+}
+
+/* Scrollbar styling */
+.player-list-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.player-list-scroll::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 2px;
 }
 
 .player-entry {
   color: #fff;
-  font-size: 1.1rem;
-  padding: 5px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  font-size: 1rem;
+  padding: 10px 15px;
+  background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), transparent);
+  border-left: 2px solid #00f3ff;
+  border-radius: 0 4px 4px 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .p-icon {
-  font-size: 0.9rem;
-  opacity: 0.7;
+  font-size: 1rem;
+  color: #00f3ff;
+  filter: drop-shadow(0 0 5px #00f3ff);
 }
 
 .empty-list {
-  color: #666;
+  color: rgba(255, 255, 255, 0.3);
   font-style: italic;
   text-align: center;
-  margin-top: 50px;
+  margin-top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  letter-spacing: 1px;
 }
 
 .arena-respawn-box {
@@ -3001,5 +4386,200 @@ if (canvasRef.value) {
   text-align: center;
   width: 100%;
   display: block;
+}
+
+/* CENTER HUD (ALIVE ONLY) */
+/* CENTER HUD (ALIVE - FLOATING GLOW) */
+.br-hud-top-center {
+  position: absolute;
+  top: 25px; /* Slightly lower */
+  right: 25px;
+  left: auto;
+  transform: none;
+
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+
+  /* No hard box */
+  background: radial-gradient(
+    circle at center,
+    rgba(0, 243, 255, 0.15) 0%,
+    transparent 70%
+  );
+  border: none;
+  border-radius: 0;
+  padding: 10px 20px;
+  box-shadow: none;
+
+  z-index: 100;
+  pointer-events: none;
+}
+
+.br-hud-top-center .alive-counter {
+  display: flex;
+  flex-direction: row;
+  align-items: center; /* Center vertically */
+  gap: 10px;
+  margin: 0 !important;
+}
+
+.br-hud-top-center .label {
+  font-size: 1.5rem; /* Slightly smaller than value */
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #00f3ff;
+  text-transform: uppercase;
+  font-family: "Segoe UI", sans-serif;
+  text-shadow: 0 0 10px #00f3ff;
+  margin-bottom: 0;
+  line-height: 1;
+}
+
+.br-hud-top-center .value {
+  font-size: 2.2rem; /* Same size as label */
+  font-weight: 900;
+  color: #fff;
+  line-height: 1;
+  font-family: "Segoe UI", sans-serif;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+}
+
+/* STAMINA BAR (Integrated with Skill) */
+.skill-stamina-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  margin-bottom: 5px; /* Space between bar and skill box */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.stamina-fill {
+  height: 100%;
+  transition: width 0.1s linear, background-color 0.2s;
+  box-shadow: 0 0 5px currentColor;
+}
+
+/* Exhausted Animation */
+.skill-stamina-bar.exhausted {
+  border-color: #ff0000;
+  box-shadow: 0 0 10px #ff0000;
+}
+
+.skill-stamina-bar.exhausted .stamina-fill {
+  background-color: #ff0000 !important;
+  animation: low-stamina-flash 0.3s infinite alternate;
+}
+
+@keyframes low-stamina-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+
+/* === SECURE CHAT STYLES === */
+.mm-chat {
+  margin-top: 15px;
+  width: 100%;
+  max-width: 450px;
+  background: rgba(0, 5, 10, 0.6);
+  border: 1px solid rgba(0, 243, 255, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  backdrop-filter: blur(5px);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-window {
+  height: 150px;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Custom Scrollbar */
+.chat-window::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-window::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 2px;
+}
+
+.chat-line {
+  font-size: 0.9rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.chat-author {
+  font-weight: bold;
+  text-shadow: 0 0 5px currentColor;
+  margin-right: 8px;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.chat-content {
+  color: #ddd;
+}
+
+.chat-empty {
+  color: rgba(0, 243, 255, 0.4);
+  font-style: italic;
+  text-align: center;
+  margin-top: auto;
+  margin-bottom: auto;
+  font-size: 0.8rem;
+}
+
+.chat-controls {
+  display: flex;
+  border-top: 1px solid rgba(0, 243, 255, 0.2);
+  padding: 5px;
+  background: rgba(0, 243, 255, 0.05);
+}
+
+.cyber-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-family: "Segoe UI", sans-serif;
+  padding: 8px;
+  outline: none;
+  font-size: 0.9rem;
+}
+
+.cyber-input::placeholder {
+  color: rgba(0, 243, 255, 0.4);
+  font-style: italic;
+}
+
+.btn-send {
+  background: transparent;
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  color: #00f3ff;
+  cursor: pointer;
+  padding: 0 15px;
+  font-weight: bold;
+  transition: all 0.2s;
+  border-radius: 4px;
+}
+
+.btn-send:hover {
+  background: rgba(0, 243, 255, 0.2);
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.4);
 }
 </style>

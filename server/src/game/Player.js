@@ -24,7 +24,14 @@ class Player {
       this.color = `hsl(${randomHue}, 100%, 50%)`;
     }
 
-    this.keys = { w: false, a: false, s: false, d: false, space: false };
+    this.keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+      space: false,
+      shift: false,
+    };
     this.mouseAngle = 0;
     this.cooldowns = { skill: 0, shoot: 0 };
 
@@ -33,16 +40,20 @@ class Player {
     this.isPhasing = false; // Walk through walls
     this.isInvisible = false;
     this.isRooted = false; // Cannot move
-    this.isRooted = false; // Cannot move
-    this.isRooted = false; // Cannot move
     this.rapidFire = false; // Fast shooting
     this.isSkillActive = false; // Visual Aura Flag
     this.freezeShotsActive = false; // Frost skill duration flag
+
+    // SPRINT STAMINA (Battle Royale only)
+    this.stamina = 100;
+    this.maxStamina = 100;
+    this.lastSprintTime = 0;
 
     // BATTLE ROYALE STATS
     // REGEN LOGIC
     this.lastDamageTime = Date.now();
     this.lastShootTime = 0;
+    this.powerCores = 0; // Initialize Cores
   }
 
   takeDamage(amount) {
@@ -52,6 +63,9 @@ class Player {
   }
 
   regenerate(dt) {
+    // No Regen if Skill Active (User Request)
+    if (this.isSkillActive) return;
+
     if (this.hp < this.maxHp && this.hp > 0) {
       const timeSinceDamage = Date.now() - this.lastDamageTime;
       const timeSinceShot = Date.now() - this.lastShootTime;
@@ -71,7 +85,7 @@ class Player {
     this.hp += 120; // Heal on pickup
   }
 
-  update(dt) {
+  update(dt, canSprint = false) {
     // Regenerate HP
     this.regenerate(dt);
 
@@ -79,10 +93,53 @@ class Player {
     if (this.cooldowns.skill > 0) this.cooldowns.skill -= dt * 1000;
     if (this.cooldowns.shoot > 0) this.cooldowns.shoot -= dt * 1000;
 
+    // STAMINA REGENERATION (Battle Royale Sprint)
+    const now = Date.now();
+    const timeSinceLastSprint = now - this.lastSprintTime;
+
+    // STAMINA REGENERATION (Battle Royale Sprint)
+    // Only regen if canSprint is true (meaning we are in BR mode)
+    if (canSprint) {
+      const now = Date.now();
+      const timeSinceLastSprint = now - this.lastSprintTime;
+
+      // Regenerate stamina if not sprinting for 4 seconds
+      if (timeSinceLastSprint > 4000 && this.stamina < this.maxStamina) {
+        this.stamina += 25 * dt; // Regenerate 25 stamina per second
+        if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
+      }
+    }
+
+    // VOLT: STATIC FIELD DAMAGE
+    if (this.staticFieldActive) {
+      if (!this.lastStaticZap) this.lastStaticZap = 0;
+      const now = Date.now();
+      if (now - this.lastStaticZap > 200) {
+        // Zap every 0.2s
+        this.lastStaticZap = now;
+        // The Player class doesn't have access to other players list directly.
+        // We must mark this state for the GameServer to handle, OR return a 'result' from update?
+        // Player.update() usually doesn't return results.
+        // Better approach: GameServer handles the damage look via a flag, OR we use a flag here.
+        // Wait, I see 'stormActive' logic in GameServer being handled there.
+        // Let's use the same pattern: 'staticFieldActive' flag is checked in GameServer.
+      }
+    }
+
     if (this.isRooted) return; // Skip movement
 
+    // SPRINT LOGIC (Battle Royale)
+    let sprintMultiplier = 1.0;
+    // Only allowed if canSprint is passed as TRUE
+    if (canSprint && this.keys.shift && this.stamina > 0) {
+      sprintMultiplier = 1.5; // 50% speed boost
+      this.stamina -= 20 * dt; // Consume 20 stamina per second
+      if (this.stamina < 0) this.stamina = 0;
+      this.lastSprintTime = Date.now();
+    }
+
     // Basic movement logic
-    const moveStep = this.speed * dt;
+    const moveStep = this.speed * sprintMultiplier * dt;
 
     // --- X AXIS MOVEMENT ---
     let dx = 0;
@@ -149,8 +206,8 @@ class Player {
 
     // Fire rate: 0.3s normally
     // Blaze: 0.05s (Super Fast)
-    // Brawler/Others: 0.15s (Moderate)
-    let rapidDelay = this.hero.name === "Blaze" ? 50 : 150;
+    // Ghost/Brawler (Rapid Fire): 0.09s (Hyper Fast)
+    let rapidDelay = this.hero.name === "Blaze" ? 50 : 90; // Reduced from 150 to 90 (User Request)
     this.cooldowns.shoot = this.rapidFire ? rapidDelay : 300;
 
     const speed = this.minesActive ? 600 : 600; // Reduced Mine Speed to 600 (User Request)
@@ -226,24 +283,41 @@ class Player {
       this.cooldowns.skill += 5000;
       duration = 5000;
       this.hp = Math.min(this.hp + 200, this.maxHp + 200);
-      this.speed = this.baseSpeed * 0.5;
+      this.isUnstoppable = true; // Buff: Immune to Slow/Stun
+      // this.speed = this.baseSpeed * 0.5; // REMOVED Speed Penalty
       setTimeout(() => {
-        this.speed = this.baseSpeed;
+        // this.speed = this.baseSpeed;
+        this.isUnstoppable = false;
       }, 5000);
     } else if (name === "Brawler") {
       this.cooldowns.skill += 3000;
       duration = 2000; // Nerfed Duration
       this.rapidFire = true;
       this.speed = this.baseSpeed * 1.3;
+      this.lifestealActive = true; // Buff: Vampirism
       setTimeout(() => {
         this.rapidFire = false;
         this.speed = this.baseSpeed;
+        this.lifestealActive = false;
       }, 2000);
     } else if (name === "Goliath") {
       this.cooldowns.skill += 3000;
       duration = 3000;
       this.shieldActive = true;
       this.hp = Math.min(this.maxHp, this.hp + 100);
+
+      // BUFF: SEISMIC SLAM (Immediate AOE)
+      result = {
+        type: "SEISMIC_SLAM",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 250,
+        damage: 0, // No Damage, only Push (User Request)
+        knockback: 400,
+        color: "#ffaa00", // Orange Impact
+      };
+
       setTimeout(() => {
         // this.isRooted = false; // Removed Root
         this.shieldActive = false;
@@ -252,40 +326,70 @@ class Player {
 
     // === SPEED ===
     else if (name === "Spectre") {
-      duration = 750;
-      this.cooldowns.skill += 4000;
-      // Phantom Dash: High Speed + Wall Phasing
-      this.speed = this.baseSpeed * 3.5;
-      this.isPhasing = true; // Pass through walls
+      duration = 1500;
+      this.cooldowns.skill += 6000;
+      // PHASE SHIFT: Invulnerability + Super Speed + Phase
+      this.speed = this.baseSpeed * 3;
+      this.isPhasing = true;
+      this.isInvincible = true; // New Buff
       setTimeout(() => {
         this.speed = this.baseSpeed;
         this.isPhasing = false;
-        this.checkUnstuck(); // Ensure not stuck in wall
-      }, 750);
-    } else if (name === "Volt") {
-      this.cooldowns.skill += 2500;
-      duration = 2500;
-      // Overload
-      this.speed = this.baseSpeed * 2.5;
-      setTimeout(() => (this.speed = this.baseSpeed), 2500);
-    } else if (name === "Ghost") {
-      this.cooldowns.skill += 3000;
-      duration = 3000;
-      // Phase
-      this.isPhasing = true;
-      setTimeout(() => {
-        this.isPhasing = false;
+        this.isInvincible = false;
         this.checkUnstuck();
+      }, 1500);
+    } else if (name === "Volt") {
+      this.cooldowns.skill += 4000;
+      duration = 3000;
+      // STATIC DISCHARGE: Speed + Auto-Zap Nearby Enemies
+      this.speed = this.baseSpeed * 2.5;
+      this.staticFieldActive = true; // Handled in update loop
+      this.lastTrailX = this.x; // CRITICAL FIX: Initialize for distance check
+      this.lastTrailY = this.y;
+
+      // Auto-damage logic needs to be in update loop, but for now we set the flag
+      setTimeout(() => {
+        this.speed = this.baseSpeed;
+        this.staticFieldActive = false;
       }, 3000);
+    } else if (name === "Ghost") {
+      console.log("[SERVER] Ghost Phasing Triggered");
+      this.cooldowns.skill += 5000;
+
+      // PHASE SHIFT: Speed + Phasing + Rapid Fire (No Teleport)
+      // "Transparent, tout lui traverse, plus rapide, tire plus vite"
+
+      this.speed = this.baseSpeed * 1.5; // Speed Boost
+      this.isPhasing = true; // Immunity
+      this.rapidFire = true; // Fast Fire
+      this.isSkillActive = true; // Visuals
+
+      setTimeout(() => {
+        this.speed = this.baseSpeed;
+        this.isPhasing = false;
+        this.rapidFire = false;
+        this.isSkillActive = false;
+        this.checkUnstuck(); // Fix: Teleport out of wall if stuck
+      }, 3000); // 3s Duration
+
+      // Fear Wave Effect (Optional? User didn't ask to remove, but "tout lui traverse" implies passive. Keeping for impact or remove?)
+      // User said "je veux juste qu'il sois transparent...". I will remove the Fear Wave to be safe and stick to "Juste transparent + buff".
+      result = null;
     }
 
     // === DAMAGE ===
     else if (name === "Blaze") {
       this.cooldowns.skill += 3000;
       duration = 3000;
-      // Rapid Fire
+      // Rapid Fire + Speed Boost (Buff)
       this.rapidFire = true;
-      setTimeout(() => (this.rapidFire = false), 3000);
+      this.speed = this.baseSpeed * 1.4; // Added Speed
+      this.hasFireTrail = true; // Visual + Mechanic?
+      setTimeout(() => {
+        this.rapidFire = false;
+        this.speed = this.baseSpeed;
+        this.hasFireTrail = false;
+      }, 3000);
     } else if (name === "Frost") {
       this.cooldowns.skill += 5000;
       duration = 5000;
@@ -298,9 +402,9 @@ class Player {
       duration = 500;
       // Railgun Shot (Instant)
 
-      const speed = 2000;
+      const speed = 2500; // Faster (User Request)
       result = {
-        type: "PROJECTILE",
+        type: "SNIPER_SHOT", // Custom Type for Trail
         id: Math.random().toString(36).substr(2, 9),
         x: this.x,
         y: this.y,
@@ -310,7 +414,10 @@ class Player {
         color: "#fff",
         life: 3000,
         damage: 1000, // One Shot
-        penetrateWalls: true, // Wall Hack
+        penetrateWalls: false, // Wall Hack REMOVED (User Request)
+        pierceEnemies: true, // Piercing Shot
+        hitList: [], // Track entities hit to avoid double damage
+        trailDuration: 1500, // Metadata for Client
       };
     } else if (name === "Shadow") {
       this.cooldowns.skill += 5000;
@@ -321,8 +428,8 @@ class Player {
       // PROPOSAL: "Supernova"
       // Charge for 0.5s, then massive radial explosion around player.
 
-      this.cooldowns.skill += 999999; // Yellow State (Busy)
-      duration = 500; // Charge time visual
+      this.cooldowns.skill += 5000; // Total ~10s CD
+      duration = 800; // Charge time visual (Sync with Server)
 
       // Mark state for GameServer to handle explosion
       this.supernovaStartTime = Date.now();
@@ -339,59 +446,54 @@ class Player {
     // --- NEW HEROES (EXPANSION) ---
     else if (name === "Citadel") {
       duration = 3000;
-      // Fortress Mode: Invincible but Immobile
+      // Fortress Mode: Invincible + Reflect + Slow Move (Buff)
       this.isInvincible = true;
-      this.speed = 0;
+      this.speed = this.baseSpeed * 0.5; // BUFF: Can move now
       this.shieldActive = true;
+      this.reflectDamage = true; // BUFF: Thorns
       setTimeout(() => {
         this.isInvincible = false;
-        // this.speed = this.baseSpeed; // REMOVED Immobility
+        this.speed = this.baseSpeed;
         this.shieldActive = false;
+        this.reflectDamage = false;
       }, 3000);
     } else if (name === "Magma") {
       duration = 500;
-      // Lava Wave: 3 Projectiles Fan
+      // Lava Wave: 5 Projectiles Fan (Buffed)
       const projs = [];
-      const fanAngle = 0.3; // Spread
-      for (let i = -1; i <= 1; i++) {
+      const fanAngle = 0.25; // Slightly tighter spread for 5 shots
+      // Fan from -2 to 2 (5 shots)
+      for (let i = -2; i <= 2; i++) {
         const angle = this.mouseAngle + i * fanAngle;
         projs.push(
           this.createProjectile(
             this.x,
             this.y,
             angle,
-            700, // speed
+            750, // speed (Buffed from 700)
             1500, // life
-            80, // damage
-            "#ff4500", // color (example for lava)
-            10, // radius
+            95, // damage (Buffed from 80)
+            "#ff4500", // color
+            12, // radius (Slightly larger)
             "LAVA_WAVE",
-            true // penetrateEnemies (handled by type in server)
+            true // penetrateEnemies
           )
         );
       }
       result = projs;
     } else if (name === "Storm") {
-      duration = 500;
-      // Overload: 16 Lightning Bolts (Buffed)
-      const projs = [];
-      for (let i = 0; i < 16; i++) {
-        const angle = (i / 16) * Math.PI * 2;
-        projs.push(
-          this.createProjectile(
-            this.x,
-            this.y,
-            angle,
-            800, // Speed
-            1000, // Life
-            25, // Damage (Buffed)
-            "#ffff00", // Color
-            8, // Radius
-            "PROJECTILE" // Type
-          )
-        );
-      }
-      result = projs;
+      duration = 5000;
+      this.cooldowns.skill += 5000; // Cooldown starts after usage
+      // TESLA STORM: Speed + Auto-Zap (Handled in Manager)
+      this.stormActive = true;
+      this.speed = this.baseSpeed * 1.6; // +60% Speed Boost (User Request)
+
+      setTimeout(() => {
+        this.stormActive = false;
+        this.speed = this.baseSpeed;
+      }, 5000);
+
+      result = null; // No immediate projectile, passive effect
     } else if (name === "Viper") {
       duration = 5000;
       // Venom: Poisonous shots
@@ -399,10 +501,9 @@ class Player {
       setTimeout(() => (this.isPoisonous = false), 5000);
     } else if (name === "Mirage") {
       duration = 4000;
-      // Cooldown starts AFTER invisibility ends (User Request)
-      this.cooldowns.skill += 4000;
-      
-      // Decoy: Spawn a fake player and go invisible
+      this.cooldowns.skill += 5000;
+
+      // LEGION: Spawn 3 Decoys + Stealth
       this.isInvisible = true;
       this.speed = this.baseSpeed * 1.5;
       setTimeout(() => {
@@ -410,33 +511,106 @@ class Player {
         this.speed = this.baseSpeed;
       }, 4000);
 
-      result = {
-        type: "DECOY",
-        x: this.x,
-        y: this.y,
-        ownerId: this.id,
-        heroName: this.hero.name,
-        heroClass: this.hero.class,
-        username: this.username || "Unknown", // FAKE NAME
-        hp: this.hp, // FAKE HP (Visual)
-        maxHp: this.maxHp,
-        powerCores: this.powerCores, // FAKE CORES (Visual)
-        color: this.color,
-        vx: Math.cos(this.mouseAngle) * this.baseSpeed,
-        vy: Math.sin(this.mouseAngle) * this.baseSpeed,
-        life: 3000,
-      };
+      const decoys = [];
+      const spreadRadius = 150;
+      const baseAngle = Math.random() * 6.28;
+      const angles = [
+        baseAngle,
+        baseAngle + (Math.PI * 2) / 3,
+        baseAngle + (Math.PI * 4) / 3,
+      ];
+
+      const obstacles = this.currentMapObstacles || [];
+      const mapW = this.mapLimits ? this.mapLimits.width : 2000;
+      const mapH = this.mapLimits ? this.mapLimits.height : 2000;
+
+      for (let offset of angles) {
+        let finalX = this.x + Math.cos(offset) * spreadRadius;
+        let finalY = this.y + Math.sin(offset) * spreadRadius;
+
+        // --- COLLISION \u0026 BOUNDS CHECK ---
+        // Simple Raycast from Player to Target to prevent wall clipping
+        const steps = 10;
+        let validX = this.x;
+        let validY = this.y;
+
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const tx = this.x + (finalX - this.x) * t;
+          const ty = this.y + (finalY - this.y) * t;
+
+          // 1. Check Bounds
+          if (tx < 50 || tx > mapW - 50 || ty < 50 || ty > mapH - 50) {
+            break; // Stop at last valid
+          }
+
+          // 2. Check Obstacles
+          let hit = false;
+          for (const obs of obstacles) {
+            if (
+              tx > obs.x - 20 &&
+              tx < obs.x + obs.w + 20 &&
+              ty > obs.y - 20 &&
+              ty < obs.y + obs.h + 20
+            ) {
+              hit = true;
+              break;
+            }
+          }
+
+          if (hit) break; // Stop at last valid
+
+          // If safe, update valid pos
+          validX = tx;
+          validY = ty;
+        }
+
+        finalX = validX;
+        finalY = validY;
+        // -------------------------------------
+
+        decoys.push({
+          type: "DECOY",
+          x: finalX,
+          y: finalY,
+          ownerId: this.id,
+          heroName: this.hero.name,
+          heroClass: this.hero.class,
+          username: this.username,
+          hp: this.maxHp,
+          maxHp: this.maxHp,
+          powerCores: this.powerCores,
+          color: this.color,
+          vx: Math.cos(this.mouseAngle + offset) * this.baseSpeed,
+          vy: Math.sin(this.mouseAngle + offset) * this.baseSpeed,
+          life: 3000,
+        });
+      }
+      result = decoys;
     } else if (name === "Jumper") {
       duration = 500;
-      // Blink (Same as Spectre)
-      const maxDist = 350; // Further than Spectre
-      let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
-      let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
+      // WARP STRIKE: Teleport + Area Blast
+      const maxDist = 450;
+      const targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
+      const targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
 
-      // Simple Wall Check (Reuse Spectre logic logic if possible, but copying for safety)
-      // ... (Simplified check: Clamp to map)
-      this.x = Math.max(0, Math.min(4000, targetX));
-      this.y = Math.max(0, Math.min(4000, targetY));
+      // Simple raycast/clamp
+      this.x = Math.max(0, Math.min(2000, targetX));
+      this.y = Math.max(0, Math.min(2000, targetY));
+      this.checkUnstuck();
+
+      this.cooldowns.skill += 3500;
+
+      result = {
+        type: "WARP_BLAST",
+        ownerId: this.id,
+        x: this.x,
+        y: this.y,
+        radius: 200,
+        damage: 50,
+        knockback: 600,
+        color: "#00fa9a",
+      };
     }
 
     // === SUPPORT ===
@@ -489,70 +663,6 @@ class Player {
       duration = 500;
       // Self Heal (Instant)
       this.hp = Math.min(this.maxHp, this.hp + 100);
-    }
-
-    // === NEW REQUESTED CHARACTERS ===
-    else if (name === "Guardian") {
-      this.cooldowns.skill += 12000;
-      duration = 8000;
-      // Healing Station: Fixed position entity
-      result = {
-        type: "HEALING_STATION",
-        ownerId: this.id,
-        x: this.x,
-        y: this.y,
-        radius: 200,
-        healRate: 20, // per tick/second
-        life: 8000,
-        color: "#00ff7f"
-      };
-    } else if (name === "Revenant") {
-      // Mark of the Abyss
-      const speed = 1500;
-      result = {
-        type: "MARKER_SHOT",
-        id: Math.random().toString(36).substr(2, 9),
-        x: this.x,
-        y: this.y,
-        vx: Math.cos(this.mouseAngle) * speed,
-        vy: Math.sin(this.mouseAngle) * speed,
-        ownerId: this.id,
-        color: "#4b0082",
-        life: 1500,
-        damage: 50, // Buffed
-        radius: 15, // Larger hitbox
-        effect: "MARK"
-      };
-    } else if (name === "Crusher") {
-      this.cooldowns.skill += 10000;
-      duration = 500; // Instant effect visual
-      // Gravity Slam
-      result = {
-        type: "GRAVITY_SLAM",
-        ownerId: this.id,
-        x: this.x,
-        y: this.y,
-        radius: 300,
-        knockback: -150
-      };
-    } else if (name === "Aegis") {
-      // Boomerang Shield
-      const speed = 1000;
-      result = {
-        type: "BOOMERANG",
-        id: Math.random().toString(36).substr(2, 9),
-        ownerId: this.id,
-        x: this.x,
-        y: this.y,
-        vx: Math.cos(this.mouseAngle) * speed,
-        vy: Math.sin(this.mouseAngle) * speed,
-        color: "#ffd700", // Gold
-        life: 3000,
-        damage: 40,
-        radius: 20,
-        returning: false,
-        maxDist: 400
-      };
     }
 
     // === COMMON AURA LOGIC ===

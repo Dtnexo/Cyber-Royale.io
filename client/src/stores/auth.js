@@ -35,7 +35,12 @@ export const useAuthStore = defineStore("auth", {
         this.token = res.data.token;
         this.user = res.data.user;
         localStorage.setItem("token", this.token);
-        router.push("/dashboard");
+
+        if (this.user.requiresReset) {
+          router.push("/force-reset");
+        } else {
+          router.push("/dashboard");
+        }
       } catch (err) {
         this.error = err.response?.data?.message || "Login failed";
       }
@@ -58,6 +63,19 @@ export const useAuthStore = defineStore("auth", {
           this.error = "Connection to server failed.";
         }
         return false;
+      }
+    },
+    async updateProfile(data) {
+      try {
+        const res = await api.put("/user/update", data);
+        // Merge updates into local user state
+        this.user = { ...this.user, ...res.data.user };
+        return { success: true, message: res.data.message };
+      } catch (err) {
+        return {
+          success: false,
+          message: err.response?.data?.message || "Update failed",
+        };
       }
     },
     logout() {

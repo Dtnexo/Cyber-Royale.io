@@ -50,24 +50,28 @@ app.get("*", (req, res) => {
 const PORT = process.env.PORT || 3005;
 
 const seed = require("./scripts/seed");
+const updateSchema = require("./scripts/update_schema");
 const { Hero } = require("./models");
 
-sequelize
-  .sync({ alter: false }) // Disabled 'alter' to prevent "Too many keys" error. Use { force: true } manually if you need to reset the DB.
-  .then(async () => {
-    console.log("Database synced");
+// Run schema update BEFORE sync to ensure columns exist
+updateSchema().then(() => {
+  sequelize
+    .sync() // Reverted alter: true due to 'Too many keys' error
+    .then(async () => {
+      console.log("Database synced");
 
-    // Auto-seed if empty
-    // Always check for updates in seed data (Prices, etc.)
-    console.log("Checking seed data...");
-    await seed();
+      // Auto-seed if empty
+      // Always check for updates in seed data (Prices, etc.)
+      console.log("Checking seed data...");
+      await seed();
 
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      // Start Game Server
-      new GameServer(io);
+      server.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+        // Start Game Server
+        new GameServer(io);
+      });
+    })
+    .catch((err) => {
+      console.error("Failed to sync db:", err);
     });
-  })
-  .catch((err) => {
-    console.error("Failed to sync db:", err);
-  });
+});
